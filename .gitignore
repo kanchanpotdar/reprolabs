@@ -1,0 +1,37 @@
+# Local configuration and secrets; keep the future safe example trackable.
+.env
+.env.*
+!.env.example
+.envrc
+secrets/
+.secrets/
+.aws/
+.ssh/
+*.pem
+*.key
+credentials*.json
+secrets*.json
+
+# User-owned paper/data downloads and generated experiment artifacts.
+/inputs/
+/runs/
+
+# Local Python environments, caches, and generated package/test files.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.cache/
+.ipynb_checkpoints/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Local operating-system metadata.
+.DS_Store
