@@ -4,12 +4,13 @@ An evidence-driven research reproducibility agent, planned to reconstruct an ML 
 
 ## Current state
 
-This repository currently contains project instructions, a staged roadmap, and a paper feasibility review. There is no application, runnable CLI, dependency environment, or model experiment yet.
+This repository contains project instructions, a staged roadmap, a paper feasibility review, and a pinned Python environment configuration. There is no application, runnable CLI, or model experiment yet.
 
 | Step | State | Evidence |
 |---|---|---|
 | S00 — Paper feasibility spike | Human-approved **CONDITIONAL**, 2026-11-21 | [Paper evidence and uncertainties](docs/p01_ground_truth.md) |
 | S01 — Repository hygiene | Human-approved, 2026-11-21; reported checks rerun successfully | This README, `.gitignore`, local Git initialization, and [approval record](docs/progress.md) |
+| S02 — Reproducible Python environment and checks | Human-approved, 2026-11-21, after review of reported checks | `pyproject.toml`, `uv.lock`, and [approval record](docs/progress.md) |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
@@ -35,6 +36,26 @@ The planned first implementation is a fixed, human-approved manifest → data va
 
 The ground-truth document is a human reference. Future extraction code and its model/tool access must not read `docs/` or receive these answer keys during evaluation.
 
+## S02 environment and verification
+
+Use **Python 3.12.16** and **uv 0.13.8**. The project enforces both versions in [pyproject.toml](pyproject.toml). Direct dependencies are scikit-learn **1.6.1**, with pytest **9.2.0** and Ruff **0.17.6** in the default development group. [uv.lock](uv.lock) records the resolved transitive dependencies and artifact hashes. The repository is not installed as a package because application source does not exist yet.
+
+S02 permits a one-time host uv bootstrap before Docker exists. From this repository root, run:
+
+```bash
+uv --version
+uv sync --locked
+uv run ruff check .
+uv run python -c 'import sklearn; print(sklearn.__version__)'
+uv run python --version
+uv run pytest --version
+uv run ruff --version
+```
+
+`uv sync --locked` creates or synchronizes the ignored `.venv` and fails if the manifest and lockfile disagree. Ruff checks Python code without executing it; the project currently has no Python source to lint. Pytest is configured but no application tests exist, so a full pytest run is not a passing test suite at this step. Once Compose is available, use Docker for project execution as required by `AGENTS.md`.
+
+The environment is a development baseline, not a reconstruction of the author's full environment. The paper declares Python 3.12.12; S02 pins the available 3.12.16 interpreter. NumPy/SciPy versions are resolved in the lockfile and are not constrained to the paper's declared versions. Preserve these differences in any later experiment comparison.
+
 ## Repository contents
 
 | Path | Purpose |
@@ -45,6 +66,8 @@ The ground-truth document is a human reference. Future extraction code and its m
 | `docs/p01_ground_truth.md` | P01 evidence, source hashes, conflicts, and conditional feasibility verdict |
 | `.gitignore` | Keeps local configuration, secrets, downloads, run artifacts, and caches out of ordinary Git staging |
 | `README.md` | Project orientation and current capabilities |
+| `pyproject.toml` | Exact Python/tool/dependency pins and pytest/Ruff configuration |
+| `uv.lock` | Resolved package versions, sources, and artifact hashes for locked synchronization |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.
 

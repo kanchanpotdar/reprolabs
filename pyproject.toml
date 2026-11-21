@@ -1,0 +1,36 @@
+[project]
+name = "reprolab"
+version = "0.0.0"
+description = "Evidence-driven research reproducibility agent"
+readme = "README.md"
+# Pin the available interpreter patch; the paper declares Python 3.12.12.
+requires-python = "==3.12.16"
+dependencies = [
+    "scikit-learn==1.6.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.2.0",
+    "ruff==0.17.6",
+]
+
+[tool.uv]
+required-version = "==0.13.8"
+# S02 manages dependencies only; application packaging does not exist yet.
+package = false
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers", "--import-mode=importlib", "-ra"]
+# No testpaths entry until tests exist, avoiding a missing-directory warning.
+norecursedirs = [".git", ".venv", "docs", "inputs", "runs"]
+
+[tool.ruff]
+required-version = "==0.17.6"
+target-version = "py312"
+line-length = 100
+extend-exclude = ["inputs", "runs"]
+
+[tool.ruff.lint]
+# Syntax/style errors, undefined/unused names, and consistent import ordering.
+select = ["E4", "E7", "E9", "F", "I"]
