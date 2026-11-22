@@ -4,7 +4,7 @@ An evidence-driven research reproducibility agent, planned to reconstruct an ML 
 
 ## Current state
 
-This repository contains paper evidence, verified UCI dataset provenance, a pinned Docker development environment, data-preparation functions, and pytest regression tests. There is no runnable CLI or model experiment yet.
+This repository contains paper evidence, verified UCI dataset provenance, a pinned Docker environment, data-preparation functions/tests, and a strict evidence-aware development manifest. There is no runnable CLI or model experiment yet.
 
 | Step | State | Evidence |
 |---|---|---|
@@ -16,6 +16,7 @@ This repository contains paper evidence, verified UCI dataset provenance, a pinn
 | S05 — Dataset acquisition and provenance | Human-approved, 2026-11-22, based on successful dataset verification | Ignored raw inputs; [source identity, schema, units, license, and discrepancies](docs/p01_ground_truth.md#8-s05-acquisition-and-provenance--observed-2026-11-22) |
 | S06 — Data loader, duplicate handling, and split | Human-approved, 2026-11-22, based on successful verification | [Data functions](src/reprolab/experiment.py); verification commands below |
 | S07 — Data and split regression tests | Human-approved, 2026-11-22, based on successful verification | [Pytest module](tests/test_experiment.py); S07 verification below |
+| S08 — Explicit locked manifest | Human-approved, 2026-11-23, based on successful verification | [Manifest schema and reviewed fixture](src/reprolab/manifest.py); S08 verification below |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
@@ -37,13 +38,13 @@ The candidate's conditional approval retains these uncertainties. A similar scor
 3. Read only the active step in [docs/roadmap.md](docs/roadmap.md).
 4. Review that step's files and observable checks before approving it.
 
-The planned first implementation is a fixed, human-approved manifest → data validation → local model run → metrics → comparison report. Only the data loading/preparation functions exist so far. Paper parsing and orchestration come later.
+The planned first implementation is a fixed, human-approved manifest → data validation → local model run → metrics → comparison report. The manifest and data loading/preparation functions exist so far. Paper parsing and orchestration come later.
 
 The ground-truth document is a human reference. Future extraction code and its model/tool access must not read `docs/` or receive these answer keys during evaluation.
 
 ## S02 environment and verification
 
-Use **Python 3.12.16** and **uv 0.13.8**. The project enforces both versions in [pyproject.toml](pyproject.toml). Direct dependencies are scikit-learn **1.6.1** and, since S06, xlrd **2.0.2**, with pytest **9.2.0** and Ruff **0.17.6** in the default development group. [uv.lock](uv.lock) records the resolved transitive dependencies and artifact hashes. Compose imports source through `PYTHONPATH=/app/src`; no packaging backend is needed yet.
+Use **Python 3.12.16** and **uv 0.13.8**. The project enforces both versions in [pyproject.toml](pyproject.toml). Direct dependencies are scikit-learn **1.6.1**, xlrd **2.0.2**, and Pydantic **2.14.4**, with pytest **9.2.0** and Ruff **0.17.6** in the default development group. [uv.lock](uv.lock) records resolved transitive dependencies and artifact hashes. Compose imports source through `PYTHONPATH=/app/src`; no packaging backend is needed yet.
 
 S02 permitted the initial one-time host uv bootstrap before Docker existed. The following records that step's checks; now use the Docker commands below for development verification rather than installing project packages on the host:
 
@@ -508,6 +509,277 @@ Expected deliberate probe: **1 collected, 0 passed, 1 failed, 0 skipped**. Resto
 
 These are data-contract regressions, not evidence of model accuracy or paper reproduction. Seed 123 remains a disclosed development choice. Review questions: Why retain rows with identical predictors but different strength targets? Why should a changed fixture fail against an unchanged expected value?
 
+## S08 manifest, evidence, and verification
+
+[manifest.py](src/reprolab/manifest.py) separates generic source observations from an explicit **development baseline**. All models use strict field types, forbidden extras, frozen nested models, immutable tuple collections, and finite numbers. A shared `Fact` record carries a value, origin, evidence status, nonempty evidence pointers, and an explanation where needed. Unknown/conflicting facts require null value/origin and reasons; conflicts need distinct pointers. Inferences may carry a candidate value but no claimed reporting origin, and cannot serve as resolved execution settings.
+
+The intended flow is source observations → separate human review/explicit execution choices → `LockedManifest` → canonical JSON and fingerprint → a later approved experiment. S08 supplies the schema and fixed development fixture only. File I/O stays with the caller (for example, hashing the actual lockfile); the manifest module neither reads documents nor runs the data/model pipeline. It assumes reviewed source pointers and the current approved dataset profile. For example, omitting `split.seed` raises `ValidationError` before a fingerprint or later execution can be accepted.
+
+The locked profile checks the approved dataset hash, exact column order/roles/units, full-row first-occurrence deduplication, preserved order, no scaling/transformation, and shuffled unstratified 70/30 splitting. Unsupported models/parameters are rejected; the typed LR configuration is **human-selected** `fit_intercept=True`, `positive=False`, `copy_X=True`, `n_jobs=1`. Seed **123** remains code-derived and approved only as a development choice. Published final intercept/positivity remain null/conflicting; published `copy_X`/estimator `n_jobs`, the holdout seed, and nRMSE ddof remain null/not reported. Global/CV seed 42 is not relabeled as the holdout seed.
+
+Metrics store **definitions and published claims**, never computed results. nRMSE explicitly adopts author-code test-standard-deviation `ddof=0`; MAPE explicitly adopts zero-target exclusion/retained-term averaging from author code. Canonical JSON sorts object keys, preserves tuple order and literal strings, uses UTF-8 and finite numbers, and contains no fingerprint field. `fingerprint()` hashes those bytes. The fingerprint identifies content; it is not a signature, approval, or permission to train.
+
+**Exact PDF hash is null.** S00 recorded a hash for an inspected CDN PDF, but its relationship to the canonical version remains unresolved and its exact bytes are not verified for this manifest. That historical record stays in the human reference; the fixture does not promote it into a new verified PDF identity. Dataset and environment lock hashes identify their respective bytes separately.
+
+`SourceObservations.model_json_schema()` is the current source-only protocol subset, with reusable `SourceFact`/`SourceEvidence` types for later extraction fields. It contains no P01 values, scientific defaults, claims, or human execution choices. It rejects human/runtime evidence kinds. A future extractor receives only the generic source schema and approved paper content; it must not receive the fixture, locked profile schema, `docs/`, or evaluation answers. A separate trusted review stage must resolve execution choices. Neither schema nor citations authenticate their own truth; artifact verification and human review remain necessary. S08 implements no extraction agent or automatic conversion/approval.
+
+One direct dependency is added: [Pydantic 2.14.4](https://pypi.org/project/pydantic/2.14.4/). Its four required transitives are locked; every previous package/version/artifact is retained. Lock resolution/installations run only inside Docker. Existing source mounts support the new module; no Compose/Dockerfile change is needed. Manifest verification stays in these S08 smoke assertions; the permanent manifest pytest module remains reserved for its own roadmap step.
+
+Rebuild once for the new dependency lock, then run the existing suite and quality checks. The build timeout is configurable; the host Python only orchestrates Docker:
+
+```bash
+python3 - <<'PY'
+import os
+import subprocess
+subprocess.run(['docker', 'compose', 'build'], check=True,
+               timeout=int(os.environ.get('REPROLAB_S08_BUILD_TIMEOUT_SECONDS', '900')))
+PY
+docker compose run --rm app uv run pytest -q
+docker compose run --rm -T app uv run --offline ruff check --no-cache .
+docker compose run --rm -T app ruff format --check src tests
+docker compose run --rm -T app uv sync --locked --offline --no-cache --no-build
+docker compose run --rm -T app uv lock --check --offline
+docker compose run --rm -T app python - <<'PY'
+import os
+import tempfile
+from pathlib import Path
+assert os.getuid() == os.getgid() == 10001
+assert os.environ['PYTHONDONTWRITEBYTECODE'] == '1'
+for file in ('src/reprolab/manifest.py', 'tests/test_experiment.py', 'uv.lock', 'inputs/Concrete_Data.xls'):
+    assert not os.access(Path('/app') / file, os.W_OK)
+assert not Path('/app/docs').exists() and not Path('/app/.git').exists()
+assert os.access('/var/lib/reprolab', os.W_OK)
+try:
+    with tempfile.TemporaryDirectory(prefix='reprolab-s08-', dir='/tmp') as scratch:
+        Path(scratch, 'cleanup-check').write_text('temporary verification only')
+        raise RuntimeError('Deliberate cleanup-path check')
+except RuntimeError:
+    pass
+assert not Path(scratch).exists()
+assert not list(Path('/tmp').glob('reprolab-s08-*'))
+assert not list(Path('/app/src').rglob('__pycache__'))
+assert not list(Path('/app/tests').rglob('__pycache__'))
+assert not Path('/app/.pytest_cache').exists()
+print('Non-root, read-only mounts, writable checkpoint directory, and failure-path cleanup: PASS')
+PY
+```
+
+Run this manifest contract check. All invalid/sensitivity variants are temporary in-memory validation inputs, not changes to the reviewed fixture or claims:
+
+```bash
+docker compose run --rm -T app python - <<'PY'
+import copy
+import hashlib
+import importlib.metadata
+import json
+import platform
+from pathlib import Path
+from pydantic import ValidationError
+from reprolab.experiment import load_concrete, remove_duplicates, select_features_target, split_data
+from reprolab.manifest import (
+    LockedManifest, SourceObservations, canonical_json, development_manifest, fingerprint,
+)
+
+lock = hashlib.sha256(Path('/app/uv.lock').read_bytes()).hexdigest()
+m = development_manifest(lock)
+encoded = canonical_json(m)
+payload = json.loads(encoded)
+assert fingerprint(m) == fingerprint(LockedManifest.model_validate_json(encoded))
+assert canonical_json(LockedManifest.model_validate_json(encoded)) == encoded
+assert 'fingerprint' not in payload
+assert m.environment.uv_lock_sha256 == lock
+assert m.environment.python == platform.python_version()
+assert m.environment.pydantic == importlib.metadata.version('pydantic') == '2.14.4'
+assert m.environment.sklearn == importlib.metadata.version('scikit-learn') == '1.6.1'
+assert m.paper.exact_pdf_sha256.value is None
+assert m.research.holdout_seed.value is None and m.research.holdout_seed.status == 'not_reported'
+assert m.research.common_or_cv_seed.value == 42
+assert m.research.nrmse_ddof.value is None
+assert m.research.final_fit_intercept.value is None and m.research.final_fit_intercept.status == 'conflicting'
+assert m.research.final_positive.value is None and m.research.final_positive.status == 'conflicting'
+assert m.research.final_copy_X.value is None and m.research.final_n_jobs.value is None
+assert m.split.seed.value == 123 and m.split.seed.origin == 'author_code_derived'
+for name, expected in (('fit_intercept', True), ('positive', False), ('copy_X', True), ('n_jobs', 1)):
+    fact = getattr(m.model, name)
+    assert fact.value == expected and fact.origin == 'human_selected'
+
+def edit(data, path, value=None, drop=False):
+    keys = [int(k) if k.isdigit() else k for k in path.split('.')]
+    parent = data
+    for key in keys[:-1]:
+        parent = parent[key]
+    if drop:
+        del parent[keys[-1]]
+    else:
+        parent[keys[-1]] = value
+
+rejections = 0
+def reject(path, value=None, drop=False):
+    global rejections
+    data = copy.deepcopy(payload)
+    edit(data, path, value, drop)
+    try:
+        LockedManifest.model_validate_json(json.dumps(data))
+    except ValidationError:
+        rejections += 1
+    else:
+        raise AssertionError('Unexpected acceptance: ' + path)
+
+for path in ('split', 'split.seed', 'split.seed.value', 'split.seed.evidence', 'model',
+             'model.fit_intercept', 'model.copy_X', 'model.n_jobs', 'dataset.sha256',
+             'paper.evidence', 'paper.exact_pdf_sha256', 'environment', 'environment.uv_lock_sha256', 'metrics'):
+    reject(path, drop=True)
+for path, values in (
+    ('schema_version', (2, True)), ('approved', (True,)),
+    ('model.name', ('RandomForestRegressor',)), ('model.alpha', (1.0,)),
+    ('split.seed.value', ('123', True, -1, 2**32, None)),
+    ('split.test_fraction.value', (0.5, 30.0, '0.3', float('nan'), float('inf'))),
+    ('split.shuffle.value', (False, 1)), ('split.stratify.value', ('age',)),
+    ('model.positive.value', ('False', 0)), ('model.n_jobs.value', (0, -1, True, '1')),
+    ('preprocessing.deduplicate.value', (False,)),
+    ('preprocessing.duplicate_key.value', ('features_only',)),
+    ('preprocessing.keep.value', ('last',)), ('preprocessing.order.value', ('sort',)),
+    ('preprocessing.scaling.value', ('standard',)), ('preprocessing.target_transform.value', ('log',)),
+    ('preprocessing.expected_rows', (1004,)), ('dataset.raw_rows', (1031,)),
+    ('dataset.uci_id', (166, True)), ('dataset.format', ('csv',)),
+    ('dataset.sha256.value', ('bad', 'X'*64, '0'*64, m.dataset.sha256.value+'\n')),
+    ('environment.uv_lock_sha256', ('', 'g'*64, lock+'\n')),
+    ('dataset.columns.0.role', ('target',)), ('dataset.columns.0.unit', ('MPa',)),
+    ('dataset.columns.1.name', (m.dataset.columns[0].name,)),
+    ('metrics.0.name', ('accuracy',)), ('metrics.0.unit', ('percent',)),
+    ('metrics.0.population', ('train',)), ('metrics.0.definition.value', ('unknown formula',)),
+    ('metrics.0.published_claim.value', (-1.0, '9.68', float('nan'), float('inf'))),
+    ('metrics.4.ddof', (None,)), ('metrics.4.ddof.value', (1, True)),
+    ('metrics.2.zero_target_policy', (None,)),
+    ('split.seed.origin', ('paper_reported',)), ('split.seed.status', ('reported', 'not_reported')),
+    ('split.seed.evidence', ([],)), ('split.seed.evidence.0.revision', (None,)),
+    ('split.seed.evidence.0.revision', ('a'*40+'\n',)),
+    ('model.fit_intercept.explanation', (None,)),
+    ('research.holdout_seed.value', (42,)), ('research.holdout_seed.origin', ('paper_reported',)),
+    ('paper.exact_pdf_sha256.value', ('0'*64,)),
+    ('paper.evidence.0.reference', ('http://example.org/paper', 'https://:', 'https://x:bad')),
+):
+    for value in values:
+        reject(path, value)
+for value in (-1, 2**32, True, '42'):
+    reject('research.common_or_cv_seed.value', value)
+reject('dataset.columns', payload['dataset']['columns'][:-1])
+reject('metrics', payload['metrics'][:-1])
+reject('metrics', payload['metrics'] + [payload['metrics'][0]])
+first = payload['research']['final_positive']['evidence'][0]
+reject('research.final_positive.evidence', [first, first])
+inferred = copy.deepcopy(payload['split']['seed'])
+inferred.update(origin=None, status='inferred', explanation='Unverified hypothesis; not execution-ready')
+reject('split.seed', inferred)
+human_claim = copy.deepcopy(payload['model']['fit_intercept'])
+human_claim['value'] = 9.68
+reject('metrics.0.published_claim', human_claim)
+
+# Frozen objects and tuples; even bypass-created invalid copies are revalidated before hashing.
+for obj, field, value in ((m.split.seed, 'value', 7), (m.model.positive, 'value', True),
+                          (m.paper.evidence[0], 'location', 'changed')):
+    try:
+        setattr(obj, field, value)
+    except ValidationError as exc:
+        assert exc.errors()[0]['type'] == 'frozen_instance'
+    else:
+        raise AssertionError('Mutable configuration')
+assert isinstance(m.metrics, tuple) and isinstance(m.dataset.columns, tuple)
+try:
+    canonical_json(m.model_copy(update={'schema_version': 99}))
+except ValidationError:
+    pass
+else:
+    raise AssertionError('Unvalidated copied instance was hashed')
+
+# Hypothetical configuration variants are validation inputs, never authorization to run.
+for path, value in (('split.seed.value', 7), ('model.positive.value', True),
+                    ('split.seed.evidence.0.location', 'Verification-only citation annotation')):
+    data = copy.deepcopy(payload)
+    edit(data, path, value)
+    if path.endswith('.value'):
+        fact = data['split']['seed'] if path.startswith('split') else data['model']['positive']
+        fact.update(origin='human_selected', status='reported',
+                    evidence=[{'kind': 'human', 'reference': 'human:S08-verification-only',
+                               'location': 'Requested sensitivity check, not a run approval', 'revision': None}],
+                    explanation='Synthetic validation variant only; no experiment execution authorized')
+    assert fingerprint(LockedManifest.model_validate_json(json.dumps(data))) != fingerprint(m)
+
+# Only generic source facts may reach a future extractor, without fixture values/defaults.
+schema = SourceObservations.model_json_schema()
+schema_text = json.dumps(schema)
+for secret in ('human_selected', 'runtime_observed', m.paper.title, m.dataset.sha256.value, '9.68'):
+    assert secret not in schema_text
+def no_defaults(node):
+    if isinstance(node, dict):
+        assert 'default' not in node
+        for value in node.values():
+            no_defaults(value)
+    elif isinstance(node, list):
+        for value in node:
+            no_defaults(value)
+no_defaults(schema)
+observed = json.loads(m.research.model_dump_json())
+SourceObservations.model_validate_json(json.dumps(observed))
+injection = copy.deepcopy(observed)
+injection['holdout_seed'] = copy.deepcopy(payload['model']['n_jobs'])
+try:
+    SourceObservations.model_validate_json(json.dumps(injection))
+except ValidationError:
+    pass
+else:
+    raise AssertionError('Extractor minted human-selected provenance')
+
+path = Path('/app/inputs/Concrete_Data.xls')
+before = path.read_bytes()
+raw = load_concrete(path)
+cleaned, duplicates = remove_duplicates(raw, expected_rows=m.preprocessing.expected_rows)
+train, test = split_data(cleaned, seed=m.split.seed.value)
+assert (len(raw.rows), len(cleaned.rows), len(train.rows), len(test.rows)) == (1030, 1005, 703, 302)
+assert set(train.row_ids).isdisjoint(test.row_ids)
+assert set(train.row_ids) | set(test.row_ids) | set(duplicates) == set(raw.row_ids)
+for partition in (train, test):
+    X, y = select_features_target(partition)
+    assert tuple(x+(target,) for x, target in zip(X, y, strict=True)) == partition.rows
+assert path.read_bytes() == before and fingerprint(m) == fingerprint(development_manifest(lock))
+print('S08 PASS; rejected invalid manifest variants:', rejections)
+print('Canonical JSON bytes:', len(encoded.encode('utf-8')), 'fingerprint:', fingerprint(m))
+print('Research unknowns preserved; immutable choices; source schema data-free; pipeline compatible; XLS unchanged.')
+PY
+git diff --check
+git diff --cached --name-only
+docker compose ps -a
+```
+
+To inspect a readable view without creating an artifact:
+
+```bash
+docker compose run --rm -T app python - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+from reprolab.manifest import development_manifest, fingerprint
+m = development_manifest(hashlib.sha256(Path('/app/uv.lock').read_bytes()).hexdigest())
+print(json.dumps({
+    'purpose': m.purpose,
+    'exact_pdf_sha256': m.paper.exact_pdf_sha256.value,
+    'published_holdout_seed': m.research.holdout_seed.value,
+    'published_fit_intercept': m.research.final_fit_intercept.value,
+    'published_positive': m.research.final_positive.value,
+    'published_copy_X': m.research.final_copy_X.value,
+    'published_n_jobs': m.research.final_n_jobs.value,
+    'development_seed': m.split.seed.model_dump(mode='json'),
+    'human_selected_model': {name: getattr(m.model, name).value for name in
+                            ('fit_intercept', 'positive', 'copy_X', 'n_jobs')},
+    'published_claims': {metric.name: metric.published_claim.value for metric in m.metrics},
+    'fingerprint': fingerprint(m),
+}, indent=2))
+# Full validated payload, if desired: print(m.model_dump_json(indent=2))
+PY
+```
+
+Expected: S08 assertions pass, all 47 existing pytest cases pass, Ruff/format/lock checks pass, and no stopped verification containers or new project scratch artifacts remain. The printed view is an excerpt; the fingerprint is displayed beside the payload, never included in its hash. No model is fitted and no reproduction metrics/results are produced. Review questions: Why can the executable seed be known while the published seed is null? Why must an extraction schema omit reviewed fixture defaults? Why does a fingerprint not count as human approval?
+
 ## Repository contents
 
 | Path | Purpose |
@@ -526,6 +798,7 @@ These are data-contract regressions, not evidence of model accuracy or paper rep
 | `inputs/` (ignored, local only) | Unmodified UCI XLS and official README; not included in Git or the image |
 | `src/reprolab/__init__.py` | Minimal package marker |
 | `src/reprolab/experiment.py` | Verified XLS loading and pure validation, duplicate handling, selection, and split functions |
+| `src/reprolab/manifest.py` | Strict immutable manifest, source evidence/uncertainties, reviewed development fixture, and content fingerprint |
 | `tests/test_experiment.py` | Synthetic data/split regressions and optional read-only XLS integration |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.

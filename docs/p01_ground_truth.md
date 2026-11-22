@@ -211,3 +211,26 @@ The literal headers below use Python string notation so doubled spaces and the t
 4. **Protocol:** the confirmed raw/unique row counts support the reported 1,030 → 1,005 distinction. They do not resolve the previously documented holdout seed or final Linear Regression settings. The candidate remains **CONDITIONAL**, with no reproduced result.
 
 **S05 verdict:** acquisition pass conditions are met: official source and attribution documented, byte identity reproducible, raw 1,030 × 9 shape and target/units verified, metadata discrepancies disclosed. **S05 APPROVED by the user, 2026-11-22, based on successful dataset verification.** This approval does not resolve the paper's seed or LR settings and is not a reproduction verdict. Exact acquisition and verification commands are in [README S05](../README.md#s05-dataset-acquisition-and-verification). A checksum mismatch must stop acquisition/verification for review; never silently replace the approved digest or overwrite a different local file.
+
+## 9. S08 development fixture — human reference, 2026-11-22
+
+The user authorized S08 implementation and explicitly selected the development configuration below, then approved S08 on **2026-11-23** based on successful verification; individual personal commands were not supplied. These annotations account for the fixed values in [manifest.py](../src/reprolab/manifest.py); they are **not extracted observations, a publication-linked run record, or permission to fit a model**.
+
+| Setting | Source/research fact retained | Explicit development configuration |
+|---|---|---|
+| Exact paper PDF hash | Historical S00 CDN digest stays in §1; canonical version and exact approved bytes remain unresolved | `paper.exact_pdf_sha256.value=null`, `not_reported`, with an explanation. No historical digest is promoted to a newly verified artifact identity |
+| Holdout seed | Published/Table 6 seed remains `null`, `not_reported`; global/CV 42 is preserved separately | `123`, `author_code_derived`, pinned cell 68 (`nENwrrqKeXtd`); human-approved S06/S08 development choice |
+| `fit_intercept` | Final published value `null`, `conflicting`: paper standard baseline versus code search | `True`, `human_selected`, explicitly requested by user |
+| `positive` | Final published value `null`, `conflicting`: paper standard baseline versus code search | `False`, `human_selected`, explicitly requested by user |
+| `copy_X` | Final published value `null`, `not_reported`; constructor defaults do not establish the final published run | `True`, `human_selected`, explicitly requested by user |
+| Estimator `n_jobs` | Final published value `null`, `not_reported`; search-worker `n_jobs=-1` is a different setting | `1`, `human_selected`, explicitly requested by user; bounds estimator concurrency |
+| Deduplication | Paper's 25 removals; code's all-nine-column, first-occurrence policy and preserved order (§4) | Full-row deduplication, first occurrence, original identifiers/order; expected 1,005 rows |
+| Features/target and split | Exact UCI schema/units (§8); paper 70/30 allocation; code-derived shuffled, unstratified behavior (§4) | Eight features and strength target; no rounding, scaling, or target transformation; 703/302 development partition |
+| Metrics | Table 6 LR claims and Eqs. (8)–(12) remain source claims (§3), not computed results | Definitions only. nRMSE: `100*RMSE/std(y_test)`, explicit code-derived `ddof=0` (cell 126, `KXOdY_BbImQk`); published ddof stays `null`. MAPE: code-derived zero exclusion and averaging over retained nonzero-target terms (cell 127, `eolGr8c7ZhHp`) |
+| Environment | Publication/author declarations remain historical (§4), not verified executable locks | Existing approved Python 3.12.16 / sklearn 1.6.1 / uv 0.13.8; S08 adds Pydantic 2.14.4 and supplies the actual lockfile SHA-256. Python/NumPy/SciPy differ from historical declarations; no matched-environment claim |
+
+The fixture preserves source pointers and the pinned author revision from §1. Unknown/conflicting source values are not filled from these execution choices. Generic source evidence records support `reported`, `derived`, `inferred`, `not_reported`, and `conflicting`; an inferred candidate cannot be treated as a resolved execution setting. Immutable strict validation and content fingerprints detect structural/configuration changes, not factual citation accuracy or approval.
+
+**Extraction boundary:** this file, other `docs/` answer keys, the development fixture, and the locked profile's scientific defaults/claims must not enter future extraction prompts or tool access. Only the generic source-observation schema and approved source material may be provided. An extractor proposes observations with evidence; a separately trusted approval stage resolves those observations into executable settings. S08 implements neither an extractor nor automatic conversion. The current generic observation subset covers seed/final-LR/normalization uncertainties; its source-only record types can be reused for additional fields in the separately approved extraction step.
+
+**Status:** S00 remains CONDITIONAL. The unverified exact PDF version, historical holdout membership/seed, and final LR settings still prevent a matched-reproduction claim. No model, prediction, or reproduction metric was produced by S08.
