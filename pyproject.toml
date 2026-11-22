@@ -7,6 +7,7 @@ readme = "README.md"
 requires-python = "==3.12.16"
 dependencies = [
     "scikit-learn==1.6.1",
+    "xlrd==2.0.2",
 ]
 
 [dependency-groups]
@@ -17,7 +18,7 @@ dev = [
 
 [tool.uv]
 required-version = "==0.13.8"
-# S02 manages dependencies only; application packaging does not exist yet.
+# Source is imported through the selective Compose mount; no build backend yet.
 package = false
 
 [tool.pytest.ini_options]

@@ -4,7 +4,7 @@ An evidence-driven research reproducibility agent, planned to reconstruct an ML 
 
 ## Current state
 
-This repository contains project instructions, a staged roadmap, a paper feasibility review, a pinned Python environment, a one-service Docker Compose development configuration, and verified local UCI dataset provenance. There is no application, runnable CLI, or model experiment yet.
+This repository contains paper evidence, verified UCI dataset provenance, a pinned Docker development environment, and a small module for validated loading, duplicate handling, feature selection, and reproducible splitting. There is no runnable CLI or model experiment yet.
 
 | Step | State | Evidence |
 |---|---|---|
@@ -14,6 +14,7 @@ This repository contains project instructions, a staged roadmap, a paper feasibi
 | S03 — Development Docker image | Human-approved, 2026-11-22, based on successful Docker verification | `Dockerfile` and `.dockerignore`; results in [progress](docs/progress.md) |
 | S04 — One-service Compose setup | Human-approved, 2026-11-22 | `compose.yaml`; results in [progress](docs/progress.md) |
 | S05 — Dataset acquisition and provenance | Human-approved, 2026-11-22, based on successful dataset verification | Ignored raw inputs; [source identity, schema, units, license, and discrepancies](docs/p01_ground_truth.md#8-s05-acquisition-and-provenance--observed-2026-11-22) |
+| S06 — Data loader, duplicate handling, and split | Human-approved, 2026-11-22, based on successful verification | [Data functions](src/reprolab/experiment.py); verification commands below |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
@@ -35,13 +36,13 @@ The candidate's conditional approval retains these uncertainties. A similar scor
 3. Read only the active step in [docs/roadmap.md](docs/roadmap.md).
 4. Review that step's files and observable checks before approving it.
 
-The planned first implementation is a fixed, human-approved manifest → data validation → local model run → metrics → comparison report. Paper parsing and orchestration come later. This flow is planned, not implemented.
+The planned first implementation is a fixed, human-approved manifest → data validation → local model run → metrics → comparison report. Only the data loading/preparation functions exist so far. Paper parsing and orchestration come later.
 
 The ground-truth document is a human reference. Future extraction code and its model/tool access must not read `docs/` or receive these answer keys during evaluation.
 
 ## S02 environment and verification
 
-Use **Python 3.12.16** and **uv 0.13.8**. The project enforces both versions in [pyproject.toml](pyproject.toml). Direct dependencies are scikit-learn **1.6.1**, with pytest **9.2.0** and Ruff **0.17.6** in the default development group. [uv.lock](uv.lock) records the resolved transitive dependencies and artifact hashes. The repository is not installed as a package because application source does not exist yet.
+Use **Python 3.12.16** and **uv 0.13.8**. The project enforces both versions in [pyproject.toml](pyproject.toml). Direct dependencies are scikit-learn **1.6.1** and, since S06, xlrd **2.0.2**, with pytest **9.2.0** and Ruff **0.17.6** in the default development group. [uv.lock](uv.lock) records the resolved transitive dependencies and artifact hashes. Compose imports source through `PYTHONPATH=/app/src`; no packaging backend is needed yet.
 
 S02 permitted the initial one-time host uv bootstrap before Docker existed. The following records that step's checks; now use the Docker commands below for development verification rather than installing project packages on the host:
 
@@ -55,7 +56,7 @@ uv run pytest --version
 uv run ruff --version
 ```
 
-`uv sync --locked` creates or synchronizes the ignored `.venv` and fails if the manifest and lockfile disagree. Ruff checks Python code without executing it; the project currently has no Python source to lint. Pytest is configured but no application tests exist, so a full pytest run is not a passing test suite at this step. Once Compose is available, use Docker for project execution as required by `AGENTS.md`.
+`uv sync --locked` creates or synchronizes the selected environment and fails if the manifest and lockfile disagree. Ruff checks Python code without executing it; S02 had no source, while S06 adds the first module. Pytest is configured but no application test files exist yet; S06 uses the explicit assertions below. Use Docker for project execution as required by `AGENTS.md`.
 
 The environment is a development baseline, not a reconstruction of the author's full environment. The paper declares Python 3.12.12; S02 pins the available 3.12.16 interpreter. NumPy/SciPy versions are resolved in the lockfile and are not constrained to the paper's declared versions. Preserve these differences in any later experiment comparison.
 
@@ -73,7 +74,7 @@ docker run --rm reprolab-dev ruff check .
 docker run --rm reprolab-dev pytest --version
 ```
 
-Expected versions are Python **3.12.16**, uv **0.13.8**, sklearn **1.6.1**, and pytest **9.2.0**; the runtime UID is **10001**. Ruff should succeed, although application source does not exist yet. Each `--rm` command removes its transient container on exit. The `reprolab-dev` image remains available locally for verification. No ports, host mounts, Docker socket, privileged mode, or additional service are required. This is a development environment; executing untrusted author code requires a separate approved runner design.
+Expected versions are Python **3.12.16**, uv **0.13.8**, sklearn **1.6.1**, and pytest **9.2.0**; the runtime UID is **10001**. These image-only commands do not mount S06 source; use Compose below to lint it. Each `--rm` command removes its transient container on exit. The `reprolab-dev` image remains available locally for verification. No ports, host mounts, Docker socket, privileged mode, or additional service are required. This is a development environment; executing untrusted author code requires a separate approved runner design.
 
 | Dockerfile instruction | What it does |
 |---|---|
@@ -89,7 +90,7 @@ Expected versions are Python **3.12.16**, uv **0.13.8**, sklearn **1.6.1**, and 
 
 The Python and uv references include registry-verified multi-platform digests in [Dockerfile](Dockerfile). These pin the selected image content; platform and system-library differences still matter for experiments. Dependencies are installed inside the image and do not reuse the host `.venv`.
 
-[.dockerignore](.dockerignore) starts by excluding everything, then permits only the three project files required by this image. Docker still receives its build instructions as metadata. This keeps `.env`, secret files, `.venv`, `.git`, `docs/` answer keys, local datasets, run outputs, and unrelated files out of the build context. Future source inclusion must be added deliberately in its creating step; S03 does not add Compose or application source.
+[.dockerignore](.dockerignore) starts by excluding everything, then permits only the three project files required by this image. Docker still receives its build instructions as metadata. This keeps `.env`, secret files, `.venv`, `.git`, `docs/` answer keys, local datasets, run outputs, and unrelated files out of the build context. S06 exposes source and the approved XLS through selective runtime mounts; they remain excluded from the image.
 
 ## S04 Compose development commands
 
@@ -104,17 +105,18 @@ docker compose run --rm app id -u
 docker compose ps -a
 ```
 
-Expect only `app` in the service listing, Python **3.12.16**, Ruff success, UID **10001**, and no leftover verification containers. Ruff currently validates the environment/configuration; there is no application code to lint yet. Compose runs commands in disposable containers; the named checkpoint volume persists after those containers exit.
+Expect only `app` in the service listing, Python **3.12.16**, Ruff success, UID **10001**, and no leftover verification containers. Ruff now checks the S06 source module as well. Compose runs commands in disposable containers; the named checkpoint volume persists after those containers exit.
 
 | Configuration | Purpose |
 |---|---|
 | `build: .`, `image: reprolab-dev` | Builds and uses the pinned development image. |
-| Three read-only bind mounts | Expose only current `pyproject.toml`, `uv.lock`, and `README.md` at `/app`. Host edits are read on the next one-off run. Application source/test directories will be mounted when those files exist; S04 creates no empty scaffolding. |
+| Five read-only bind mounts | Expose `pyproject.toml`, `uv.lock`, README, `src/`, and only the approved `inputs/Concrete_Data.xls`. S06 adds the last two mounts; host edits are visible without copying the whole checkout. |
 | `create_host_path: false` | Fails for a missing source file instead of silently creating a host directory. |
 | `UV_LOCKED=1` | Makes `uv run` reject manifest/lock drift; it must not rewrite the mounted lockfile. |
+| `PYTHONPATH=/app/src` | Imports the mounted S06 package without adding a build backend or installing source on the host. |
 | `checkpoint_state:/var/lib/reprolab` | Reserves Docker-managed storage for future SQLite checkpoints; no database is created in S04. The image pre-creates this path for UID/GID 10001 so a new volume can be used without root. |
 
-Dependencies remain inside `/opt/venv`, outside the bind mounts. The whole repository is not mounted: `.env`, host `.venv`, `.git`, `docs/` answer keys, inputs, and run artifacts are not exposed by this configuration. Build-context exclusions and runtime mount selection are separate controls. No Docker socket, privileged mode, ports, or additional service is configured.
+Dependencies remain inside `/opt/venv`, outside the bind mounts. `.env`, host `.venv`, `.git`, `docs/` answer keys, other input files, and run artifacts are not exposed by Compose. Build-context exclusions and runtime mount selection are separate controls. No Docker socket, privileged mode, ports, or additional service is configured.
 
 On macOS/Windows, bind-mounted SQLite files may lock or perform poorly. Keep future state at `/var/lib/reprolab/state.sqlite` in the named volume, not under a source mount or `runs/`. With the default project name, Docker calls this volume `reprolab_checkpoint_state`. It is intentionally retained; avoid `docker compose down -v` or volume pruning when preserving checkpoints.
 
@@ -148,11 +150,11 @@ docker compose ps -a
 
 Provenance connects the data used locally to an identifiable source: official URL → unchanged downloaded bytes → checksum → inspected schema. A hash pins the file snapshot; it does not establish the paper's historical training split. The [S05 evidence](docs/p01_ground_truth.md#8-s05-acquisition-and-provenance--observed-2026-11-22) records the source, exact headers, units, license, and observed metadata discrepancies.
 
-From this repository root with Docker running, the following acquisition command is optional if the two verified files are already present. It downloads only the official UCI archive, validates every member before writing, and refuses to overwrite a different local file. It has a 60-second network socket timeout, a 1 MB response limit, and no automatic retries. It retains only the original XLS and official README; the ZIP is scoped to container `/tmp` and cleaned even on failure. No host Python packages are installed.
+From this repository root with Docker running and `reprolab-dev` built, the following acquisition command is optional if the two verified files are already present. It uses `docker run` so initial acquisition can work before S06's required XLS bind source exists. It downloads only the official UCI archive, validates every member before writing, and refuses to overwrite a different local file. It has a 60-second network socket timeout, a 1 MB response limit, and no automatic retries. It retains only the original XLS and official README; the ZIP is scoped to container `/tmp` and cleaned even on failure. No host Python packages are installed.
 
 ```bash
 mkdir -p inputs
-docker compose run --rm -T --volume "$PWD/inputs:/app/inputs" app python - <<'PY'
+docker run --rm -i --mount "type=bind,source=$PWD/inputs,target=/app/inputs" reprolab-dev python - <<'PY'
 import hashlib
 import tempfile
 import urllib.request
@@ -275,6 +277,157 @@ Manually open the [UCI record](https://archive.ics.uci.edu/dataset/165/concrete+
 
 Review questions: What does the checksum establish about the source file? Why should slag retain fractional values? Why does verifying 25 duplicates leave the paper's seed and LR settings unresolved?
 
+## S06 data preparation and verification
+
+[experiment.py](src/reprolab/experiment.py) has one file-I/O boundary, `load_concrete(path)`. It hashes the bytes before parsing those same bytes with pinned xlrd, checks the original workbook structure/cell types, and calls the pure `validate_concrete(headers, rows)` function for the exact schema, 1,030 rows, nine columns, and finite numeric values. The checksum and schema are human-approved development fixtures; the module does not read `docs/` or extract paper settings.
+
+`ConcreteData` holds immutable tuples of numeric rows and aligned **original Excel row numbers 2–1031**, with the header excluded. `remove_duplicates` compares all nine values, keeps the first occurrence without sorting, and returns both the cleaned data and a `duplicate_of` mapping from each removed row ID to its retained first occurrence. The default expected cleaned count is 1,005; a mismatch raises `ValueError`. The XLS is never rewritten.
+
+`select_features_target` returns eight-feature rows and the strength targets in the supplied order, retaining the original precision and units. `split_data(cleaned, seed=123)` splits complete rows and IDs together, using an explicit integer seed, 30% test allocation, shuffling, and no stratification. It rejects data that still contains duplicate full rows. Select features/target on the returned partitions to preserve alignment. No scaler, estimator, tuning, or metrics are involved. Deduplicating first prevents identical full rows appearing across the holdout boundary; it does not guarantee independence of related mixtures or resolve historical experimental provenance.
+
+**Seed 123 is an author-code-derived development choice, not a verified configuration for the published results.** The seed argument has no default. Repeatability also depends on identical source bytes, retained row order, and the pinned environment. The paper's seed and final LR settings remain unresolved.
+
+Only `xlrd==2.0.2` is added; existing versions are retained in the lock. Lock resolution was performed inside Docker using copies of the manifest, lock, and README scoped to container `/tmp`, with temporary storage cleaned afterward. No host dependency installation, pandas, or new build backend is required. The Dockerfile and `.dockerignore` remain unchanged: runtime Compose mounts expose the source and approved XLS read-only.
+
+From the repository root, build and check the locked environment. The image was rebuilt for the S06 handoff; skip the build command when reusing that image with the same dependency files. The host Python command below only puts a configurable timeout around Docker; it does not import or install project packages:
+
+```bash
+python3 - <<'PY'
+import os
+import subprocess
+subprocess.run(['docker', 'compose', 'build'], check=True,
+               timeout=int(os.environ.get('REPROLAB_S06_BUILD_TIMEOUT_SECONDS', '900')))
+PY
+docker compose config --services
+docker compose run --rm -T app uv sync --locked --offline --no-cache --no-build
+docker compose run --rm -T app uv lock --check --offline
+docker compose run --rm -T app uv run --offline ruff check --no-cache .
+docker compose run --rm -T app ruff format --check src
+```
+
+Run the following data and failure-case checks. They create no repository artifacts; the altered-checksum fixture is scoped to container `/tmp` and removed afterward:
+
+```bash
+docker compose run --rm -T app python - <<'PY'
+import hashlib
+import os
+import tempfile
+from pathlib import Path
+from reprolab.experiment import (
+    CONCRETE_COLUMNS, CONCRETE_SHA256, ConcreteData, load_concrete,
+    remove_duplicates, select_features_target, split_data, validate_concrete,
+)
+
+assert os.getuid() == os.getgid() == 10001
+for mount in ('/app/src', '/app/inputs/Concrete_Data.xls', '/app/pyproject.toml',
+              '/app/uv.lock', '/app/README.md'):
+    assert os.statvfs(mount).f_flag & os.ST_RDONLY, mount
+assert not Path('/app/docs').exists() and not Path('/app/.git').exists()
+assert os.access('/var/lib/reprolab', os.W_OK)
+path = Path('/app/inputs/Concrete_Data.xls')
+original_bytes = path.read_bytes()
+raw = load_concrete(path)
+assert len(raw.rows) == 1030 and all(len(row) == 9 for row in raw.rows)
+assert raw.row_ids == tuple(range(2, 1032))
+cleaned, duplicate_of = remove_duplicates(raw)
+assert len(cleaned.rows) == 1005 and len(duplicate_of) == 25
+assert set(cleaned.row_ids).isdisjoint(duplicate_of)
+assert set(cleaned.row_ids) | set(duplicate_of) == set(raw.row_ids)
+assert list(cleaned.row_ids) == sorted(cleaned.row_ids)
+for row_id, row in zip(cleaned.row_ids, cleaned.rows, strict=True):
+    assert raw.rows.index(row) + 2 == row_id  # First source occurrence retained.
+for removed, retained in duplicate_of.items():
+    assert retained in cleaned.row_ids and retained < removed
+    assert raw.rows[removed - 2] == raw.rows[retained - 2]
+X, y = select_features_target(cleaned)
+assert len(X) == len(y) == 1005 and all(len(row) == 8 for row in X)
+assert tuple(x + (target,) for x, target in zip(X, y, strict=True)) == cleaned.rows
+train, test = split_data(cleaned, seed=123)
+assert len(train.rows) == 703 and len(test.rows) == 302
+assert (train, test) == split_data(cleaned, seed=123)
+assert set(train.row_ids).isdisjoint(test.row_ids)
+assert set(train.rows).isdisjoint(test.rows)
+assert set(train.row_ids) | set(test.row_ids) == set(cleaned.row_ids)
+assert set(train.row_ids) | set(test.row_ids) | set(duplicate_of) == set(raw.row_ids)
+for part in (train, test):
+    features, targets = select_features_target(part)
+    for row_id, row, x, target in zip(part.row_ids, part.rows, features, targets, strict=True):
+        assert row == raw.rows[row_id - 2] == x + (target,)
+
+def expect_error(label, call, message, error=ValueError):
+    try:
+        call()
+    except error as exc:
+        assert message in str(exc), (label, str(exc))
+        print('Rejected:', label)
+    else:
+        raise AssertionError('Unexpected acceptance: ' + label)
+
+expect_error('reordered headers', lambda: validate_concrete(CONCRETE_COLUMNS[::-1], raw.rows), 'schema')
+expect_error('wrong row count', lambda: validate_concrete(CONCRETE_COLUMNS, raw.rows[:-1]), '1030')
+expect_error('missing target', lambda: validate_concrete(CONCRETE_COLUMNS, [r[:8] for r in raw.rows]), '9 columns')
+for bad in (None, '', '1.0', True, float('nan'), float('inf')):
+    malformed = ((bad,) + raw.rows[0][1:],) + raw.rows[1:]
+    expect_error(repr(bad), lambda: validate_concrete(CONCRETE_COLUMNS, malformed), 'finite number')
+expect_error('duplicate IDs', lambda: select_features_target(ConcreteData(raw.rows, (2,) * 1030)), 'unique')
+expect_error('misaligned IDs', lambda: select_features_target(ConcreteData(raw.rows, raw.row_ids[:-1])), 'equal lengths')
+expect_error('cleaned count mismatch', lambda: remove_duplicates(raw, expected_rows=1004), '1004')
+expect_error('split before deduplication', lambda: split_data(raw, seed=123), 'duplicate full rows')
+for bad_seed in (None, True, -1, 2**32, 1.5, '123'):
+    expect_error('seed=' + repr(bad_seed), lambda: split_data(cleaned, seed=bad_seed), 'seed')
+expect_error('missing seed', lambda: split_data(cleaned), 'seed', TypeError)
+with tempfile.TemporaryDirectory(prefix='reprolab-s06-', dir='/tmp') as scratch:
+    altered = Path(scratch) / 'altered.xls'
+    altered.write_bytes(original_bytes[:-1] + bytes([original_bytes[-1] ^ 1]))
+    expect_error('altered XLS checksum', lambda: load_concrete(altered), 'SHA-256 mismatch')
+assert not Path(scratch).exists()
+assert path.read_bytes() == original_bytes
+assert hashlib.sha256(original_bytes).hexdigest() == CONCRETE_SHA256
+digest = hashlib.sha256(repr((train.row_ids, test.row_ids)).encode()).hexdigest()
+print('Split identifier digest:', digest)
+print('S06 PASS: raw 1030 x 9; cleaned 1005; train 703; test 302; removed IDs 25.')
+print('All source IDs accounted for; repeatable disjoint split; failure cases rejected.')
+print('UID/GID 10001; read-only mounts; XLS unchanged; scratch removed; no training.')
+PY
+```
+
+Check that a stale lock is rejected rather than rewritten. This changes only a temporary manifest copy, never the project files. The negative probe needs public PyPI metadata because uv must re-resolve the changed project; offline failure with an empty metadata cache would not prove lock-drift rejection. Registry metadata/cache is scoped to container `/tmp`, HTTP timeout is 60 seconds, retries are disabled, and the probe has a 150-second cap. No packages are installed by this probe:
+
+```bash
+docker compose run --rm -T app python - <<'PY'
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+with tempfile.TemporaryDirectory(prefix='reprolab-s06-drift-', dir='/tmp') as scratch:
+    root = Path(scratch)
+    for name in ('pyproject.toml', 'uv.lock', 'README.md'):
+        shutil.copyfile(Path('/app') / name, root / name)
+    before = (root / 'uv.lock').read_bytes()
+    manifest = root / 'pyproject.toml'
+    manifest.write_text(manifest.read_text().replace('version = "0.0.0"', 'version = "0.0.1"', 1))
+    env = dict(os.environ, UV_CACHE_DIR=str(root / 'cache'),
+               UV_HTTP_TIMEOUT='60', UV_HTTP_RETRIES='0')
+    result = subprocess.run(['uv', 'lock', '--check', '--project', scratch], env=env,
+                            capture_output=True, text=True, timeout=150)
+    assert result.returncode != 0 and 'needs to be updated' in result.stderr, result.stderr
+    assert (root / 'uv.lock').read_bytes() == before
+assert not root.exists()
+print('Lock drift rejected; lock unchanged; temporary copy removed.')
+PY
+git diff --check
+git diff --cached --name-only
+git ls-files -- inputs/
+git check-ignore -v inputs/Concrete_Data.xls inputs/Concrete_Readme.txt
+docker compose ps -a
+```
+
+Expected: only service `app`, locked dependency checks and Ruff pass, `S06 PASS`, explicit rejection of invalid inputs and stale lock, no staged/tracked input files, and no remaining project containers. Keep `reprolab_checkpoint_state`; these checks do not create a database or delete the volume. These are S06 smoke assertions, not a persistent pytest suite or an experiment. No model is trained, and no reproduction metrics are generated.
+
+Understanding checks: Why remove identical full rows before splitting? How do retained IDs plus `duplicate_of` account for every original row? Why does seed 123 provide a repeatable development split without proving the published split?
+
 ## Repository contents
 
 | Path | Purpose |
@@ -291,6 +444,8 @@ Review questions: What does the checksum establish about the source file? Why sh
 | `.dockerignore` | Minimal build-context allowlist |
 | `compose.yaml` | One development service, selective live file mounts, and the checkpoint state volume |
 | `inputs/` (ignored, local only) | Unmodified UCI XLS and official README; not included in Git or the image |
+| `src/reprolab/__init__.py` | Minimal package marker |
+| `src/reprolab/experiment.py` | Verified XLS loading and pure validation, duplicate handling, selection, and split functions |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.
 

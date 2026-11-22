@@ -7,8 +7,9 @@ services:
     environment:
       # uv run must reject manifest/lock drift rather than rewrite a mounted lock.
       UV_LOCKED: "1"
+      PYTHONPATH: /app/src
     volumes:
-      # Mount current development inputs only; add source directories when created.
+      # Selective, read-only development mounts; never expose the whole checkout.
       - type: bind
         source: ./pyproject.toml
         target: /app/pyproject.toml
@@ -24,6 +25,18 @@ services:
       - type: bind
         source: ./README.md
         target: /app/README.md
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./src
+        target: /app/src
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./inputs/Concrete_Data.xls
+        target: /app/inputs/Concrete_Data.xls
         read_only: true
         bind:
           create_host_path: false
