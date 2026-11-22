@@ -1,10 +1,10 @@
 # ReproLab — human-verified progress
 
-- **Current step:** S02 — reproducible Python environment and checks
-- **Current status:** APPROVED by the user after reviewing reported checks
-- **Next step:** Read and explain S03 only; implementation requires separate approval
-- **Approved steps:** S00 — APPROVED (CONDITIONAL); S01 and S02 — APPROVED, 2026-11-21
-- **Commit/push:** S00 + S01 pushed as `837a92101d5fbaec82a8c6bf73dc854758355860`; S02 commit/push authorized, with its SHA and verified remote outcome reported in the handoff
+- **Current step:** S03 — development Docker image
+- **Current status:** APPROVED by the user based on successful Docker verification
+- **Next step:** Read and explain S04 only; implementation requires separate approval
+- **Approved steps:** S00 — APPROVED (CONDITIONAL); S01 and S02 — APPROVED, 2026-11-21; S03 — APPROVED, 2026-11-22
+- **Commit/push:** S00 + S01 pushed as `837a92101d5fbaec82a8c6bf73dc854758355860`; S02 pushed as `0835992e92ae3763008a4fb3d849f4169892cff8`; S03 commit/push authorized, with SHA and verified remote outcome reported in the handoff
 
 This file is authoritative for the human review gate. Update it in the **same commit** as each approved step. Do not advance a step merely because automated tests pass; record the human's verification first.
 
@@ -27,6 +27,7 @@ This file is authoritative for the human review gate. Update it in the **same co
 | S00 | concept | APPROVED (CONDITIONAL) | User explicitly accepted the feasibility verdict with unresolved seed and LR settings documented; individual manual commands/source checks were not reported | APPROVED by user, 2026-11-21 (Asia/Kolkata) | Included with S01 in the authorized initial commit; see Git history/handoff for SHA and push verification |
 | S01 | mechanical | APPROVED | User approved subject to reported checks passing; the agent reran those checks successfully; personal commands were not separately supplied | APPROVED by user, 2026-11-21 (Asia/Kolkata) | Authorized initial commit with S00 to origin/main; see Git history/handoff for SHA and push verification |
 | S02 | mechanical | APPROVED | User approved after reviewing reported checks; individual personal commands were not supplied | APPROVED by user, 2026-11-21 (Asia/Kolkata) | Commit/push to origin/main authorized; see Git history/handoff for SHA and remote verification |
+| S03 | mechanical | APPROVED | User explicitly approved based on successful Docker verification; individual personal commands were not supplied | APPROVED by user, 2026-11-22 (Asia/Kolkata) | Commit/push to origin/main authorized; see Git history/handoff for SHA and remote verification |
 
 ### S00 approval record
 
@@ -64,7 +65,25 @@ This file is authoritative for the human review gate. Update it in the **same co
 - User decision: “I approve S02 after reviewing the reported checks.” The user separately authorized staging the intended files, reviewing for secrets/unnecessary artifacts, committing with `build: pin Python environment and configure checks`, and pushing to `origin/main`.
 - Human-observed review: approval of the reported checks is explicit; individual commands the human personally ran were not supplied and are not inferred. The documented environment differences and absence of application/model tests remain unchanged.
 - Commit scope: `pyproject.toml`, `uv.lock`, `README.md`, and this progress record. The handoff reports the resulting commit SHA and verified remote outcome. No follow-up commit is created merely to record its own hash here.
-- S03 scope explanation is requested; implementation remains unauthorized until a separate explicit approval.
+- At the S02 handoff, only an S03 scope explanation was requested. The user subsequently authorized S03 implementation separately, as recorded below.
+
+### S03 approval record
+
+- User authorization on 2026-11-22: implement the pinned Docker environment, build it, run S03 verification, explain each Dockerfile instruction, and stop before any commit, push, or S04 work. This authorizes implementation; final review of the resulting files/checks remains pending.
+- Two new files: `Dockerfile` and `.dockerignore`. README/progress edits document the environment and verification procedure. No Compose or application files are created; no project packages are installed on the host.
+- Registry-verified image-index pins: `python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df` and `ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85`. Digests were resolved through `docker buildx imagetools inspect` on 2026-11-22. The built/tested platform is **linux/arm64**; other platforms are not execution-verified by S03.
+- Image layout: Debian Bookworm slim with Python 3.12.16; pinned uv executable; dependencies in `/opt/venv`; work directory `/app`; user/group `reprolab` UID/GID 10001. Only `pyproject.toml`, `uv.lock`, and README are copied. Installation uses `uv sync --locked --no-cache --no-build` as the non-root user, including development tools. No privileged mode, host mounts, ports, Docker socket, extra services, or source compilation are required.
+- Resource budget: zero paid calls; configurable `REPROLAB_S03_BUILD_TIMEOUT_SECONDS` defaults to 900 seconds per build attempt, with at most one retry for a diagnosed download failure. No model training or paper experiment is part of S03.
+- Docker context check passed using a disposable scratch build/export: only the three allowed project files reached the export; dummy `.env`, `.venv`, `inputs`, `runs`, `.git`, `docs`, and unrelated-file probes were excluded. Real secrets/data were not used. The temporary context/export was cleaned. Docker's missing-Git-metadata warning for the temporary non-repository context was informational and did not affect the exclusion check.
+- Required build passed on the first attempt: `docker build -t reprolab-dev .` exited 0 within the 900-second cap. The build installed 12 locked packages inside the image as the unprivileged user, printed Python 3.12.16 and uv 0.13.8, and left the host lockfile unchanged. No retry or host dependency installation was needed.
+- All runtime commands exited 0: default `docker run --rm reprolab-dev`; explicit `python --version` → **3.12.16**; `uv --version` → **0.13.8**; sklearn import/version → **1.6.1**; `id -u` → **10001**; `ruff check .` → **All checks passed!**; `pytest --version` → **9.2.0**. No application source/tests exist; these are environment checks rather than model or application correctness results.
+- Additional runtime assertions passed: UID/GID both 10001; environment `/opt/venv`; exactly `README.md`, `pyproject.toml`, and `uv.lock` in `/app`; no copied host `.venv` or retained uv download cache; container lock SHA-256 equals the unchanged host lock; a `TemporaryDirectory` under `/tmp` is writable and removed after its context exits. NumPy **2.5.5** and SciPy **1.18.1** match the lock.
+- Built local image ID/digest: `sha256:3831ec67a3dfd7717f1b77101c57ad7f1b6e427929395d177c9342bb100b0c20`, tag `reprolab-dev:latest`, configured user `reprolab:reprolab`, default command `["python", "--version"]`. This is a local build artifact; no image publication occurred.
+- Cleanup: all verification containers used `--rm`; temporary context/export files and in-container scratch data were removed. The development image and ordinary Docker build cache remain for human verification. No project virtual environment or dependency was added/changed on the host by S03.
+- User decision: “I approve S03 based on the successful Docker verification.” The same message separately authorizes final diff review, staging only intended files, committing with `build: add pinned non-root Docker development image`, and pushing to `origin/main`.
+- Human-observed review: approval based on the reported Docker verification is explicit; individual commands personally run by the human were not supplied and are not inferred. The recorded platform limitation and absence of model/application tests remain unchanged.
+- Commit scope: `Dockerfile`, `.dockerignore`, `README.md`, and this progress record. The handoff reports the resulting SHA and verified remote outcome; no follow-up commit is created merely to record its own hash.
+- S04 purpose/proposal/testing explanation is requested; implementation remains unauthorized until a separate explicit approval.
 
 ### Entry template for approved steps
 

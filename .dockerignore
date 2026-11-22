@@ -1,0 +1,6 @@
+# Send only the current image's project inputs to the builder.
+# Docker still receives Dockerfile and .dockerignore as build metadata.
+**
+!pyproject.toml
+!uv.lock
+!README.md

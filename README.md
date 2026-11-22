@@ -4,13 +4,14 @@ An evidence-driven research reproducibility agent, planned to reconstruct an ML 
 
 ## Current state
 
-This repository contains project instructions, a staged roadmap, a paper feasibility review, and a pinned Python environment configuration. There is no application, runnable CLI, or model experiment yet.
+This repository contains project instructions, a staged roadmap, a paper feasibility review, a pinned Python environment, and a Docker development image configuration. There is no application, runnable CLI, or model experiment yet.
 
 | Step | State | Evidence |
 |---|---|---|
 | S00 — Paper feasibility spike | Human-approved **CONDITIONAL**, 2026-11-21 | [Paper evidence and uncertainties](docs/p01_ground_truth.md) |
 | S01 — Repository hygiene | Human-approved, 2026-11-21; reported checks rerun successfully | This README, `.gitignore`, local Git initialization, and [approval record](docs/progress.md) |
 | S02 — Reproducible Python environment and checks | Human-approved, 2026-11-21, after review of reported checks | `pyproject.toml`, `uv.lock`, and [approval record](docs/progress.md) |
+| S03 — Development Docker image | Human-approved, 2026-11-22, based on successful Docker verification | `Dockerfile` and `.dockerignore`; results in [progress](docs/progress.md) |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
@@ -40,7 +41,7 @@ The ground-truth document is a human reference. Future extraction code and its m
 
 Use **Python 3.12.16** and **uv 0.13.8**. The project enforces both versions in [pyproject.toml](pyproject.toml). Direct dependencies are scikit-learn **1.6.1**, with pytest **9.2.0** and Ruff **0.17.6** in the default development group. [uv.lock](uv.lock) records the resolved transitive dependencies and artifact hashes. The repository is not installed as a package because application source does not exist yet.
 
-S02 permits a one-time host uv bootstrap before Docker exists. From this repository root, run:
+S02 permitted the initial one-time host uv bootstrap before Docker existed. The following records that step's checks; now use the Docker commands below for development verification rather than installing project packages on the host:
 
 ```bash
 uv --version
@@ -56,6 +57,38 @@ uv run ruff --version
 
 The environment is a development baseline, not a reconstruction of the author's full environment. The paper declares Python 3.12.12; S02 pins the available 3.12.16 interpreter. NumPy/SciPy versions are resolved in the lockfile and are not constrained to the paper's declared versions. Preserve these differences in any later experiment comparison.
 
+## S03 Docker development image
+
+Prerequisite: a running Docker daemon. From this repository root:
+
+```bash
+docker build -t reprolab-dev .
+docker run --rm reprolab-dev python --version
+docker run --rm reprolab-dev uv --version
+docker run --rm reprolab-dev python -c 'import sklearn; print(sklearn.__version__)'
+docker run --rm reprolab-dev id -u
+docker run --rm reprolab-dev ruff check .
+docker run --rm reprolab-dev pytest --version
+```
+
+Expected versions are Python **3.12.16**, uv **0.13.8**, sklearn **1.6.1**, and pytest **9.2.0**; the runtime UID is **10001**. Ruff should succeed, although application source does not exist yet. Each `--rm` command removes its transient container on exit. The `reprolab-dev` image remains available locally for verification. No ports, host mounts, Docker socket, privileged mode, or additional service are required. This is a development environment; executing untrusted author code requires a separate approved runner design.
+
+| Dockerfile instruction | What it does |
+|---|---|
+| `FROM python:3.12.16-slim-bookworm@sha256:...` | Selects the exact Python release and immutable Debian Bookworm slim image index. |
+| `COPY --from=ghcr.io/astral-sh/uv:0.13.8@sha256:...` | Copies the pinned official uv executable into the image; no installer script is run. |
+| `ENV` | Places the image's `/opt/venv/bin` first on PATH, selects `/opt/venv` for uv, disables interpreter downloads, and configures Python output/bytecode behavior. |
+| First `RUN` | Creates user/group `reprolab` with UID/GID 10001, its home, and writable `/app` and `/opt/venv` directories. |
+| `WORKDIR /app` | Sets the working directory for later build instructions and runtime commands. |
+| Project `COPY --chown=...` | Copies only `pyproject.toml`, `uv.lock`, and this README, owned by the unprivileged user. |
+| `USER reprolab:reprolab` | Runs subsequent build instructions and containers without root privileges. |
+| Final `RUN` | Uses `uv sync --locked --no-cache --no-build` to install existing locked dependencies, including development tools, then prints Python/uv versions. Downloads use uv's temporary cache; source distributions are not compiled. |
+| `CMD ["python", "--version"]` | Prints the effective Python version when no command is supplied; there is no application entry point yet. |
+
+The Python and uv references include registry-verified multi-platform digests in [Dockerfile](Dockerfile). These pin the selected image content; platform and system-library differences still matter for experiments. Dependencies are installed inside the image and do not reuse the host `.venv`.
+
+[.dockerignore](.dockerignore) starts by excluding everything, then permits only the three project files required by this image. Docker still receives its build instructions as metadata. This keeps `.env`, secret files, `.venv`, `.git`, `docs/` answer keys, local datasets, run outputs, and unrelated files out of the build context. Future source inclusion must be added deliberately in its creating step; S03 does not add Compose or application source.
+
 ## Repository contents
 
 | Path | Purpose |
@@ -68,6 +101,8 @@ The environment is a development baseline, not a reconstruction of the author's 
 | `README.md` | Project orientation and current capabilities |
 | `pyproject.toml` | Exact Python/tool/dependency pins and pytest/Ruff configuration |
 | `uv.lock` | Resolved package versions, sources, and artifact hashes for locked synchronization |
+| `Dockerfile` | Pinned Python/uv image, locked in-image environment, and non-root development runtime |
+| `.dockerignore` | Minimal build-context allowlist |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.
 
