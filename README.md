@@ -4,7 +4,7 @@ An evidence-driven research reproducibility agent, planned to reconstruct an ML 
 
 ## Current state
 
-This repository contains paper evidence, verified UCI dataset provenance, a pinned Docker development environment, and a small module for validated loading, duplicate handling, feature selection, and reproducible splitting. There is no runnable CLI or model experiment yet.
+This repository contains paper evidence, verified UCI dataset provenance, a pinned Docker development environment, data-preparation functions, and pytest regression tests. There is no runnable CLI or model experiment yet.
 
 | Step | State | Evidence |
 |---|---|---|
@@ -15,6 +15,7 @@ This repository contains paper evidence, verified UCI dataset provenance, a pinn
 | S04 — One-service Compose setup | Human-approved, 2026-11-22 | `compose.yaml`; results in [progress](docs/progress.md) |
 | S05 — Dataset acquisition and provenance | Human-approved, 2026-11-22, based on successful dataset verification | Ignored raw inputs; [source identity, schema, units, license, and discrepancies](docs/p01_ground_truth.md#8-s05-acquisition-and-provenance--observed-2026-11-22) |
 | S06 — Data loader, duplicate handling, and split | Human-approved, 2026-11-22, based on successful verification | [Data functions](src/reprolab/experiment.py); verification commands below |
+| S07 — Data and split regression tests | Human-approved, 2026-11-22, based on successful verification | [Pytest module](tests/test_experiment.py); S07 verification below |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
@@ -56,7 +57,7 @@ uv run pytest --version
 uv run ruff --version
 ```
 
-`uv sync --locked` creates or synchronizes the selected environment and fails if the manifest and lockfile disagree. Ruff checks Python code without executing it; S02 had no source, while S06 adds the first module. Pytest is configured but no application test files exist yet; S06 uses the explicit assertions below. Use Docker for project execution as required by `AGENTS.md`.
+`uv sync --locked` creates or synchronizes the selected environment and fails if the manifest and lockfile disagree. Ruff checks Python code without executing it; S02 had no source, while S06 adds the first module. S07 adds pytest regression tests alongside the earlier S06 smoke assertions. Use Docker for project execution as required by `AGENTS.md`.
 
 The environment is a development baseline, not a reconstruction of the author's full environment. The paper declares Python 3.12.12; S02 pins the available 3.12.16 interpreter. NumPy/SciPy versions are resolved in the lockfile and are not constrained to the paper's declared versions. Preserve these differences in any later experiment comparison.
 
@@ -90,7 +91,7 @@ Expected versions are Python **3.12.16**, uv **0.13.8**, sklearn **1.6.1**, and 
 
 The Python and uv references include registry-verified multi-platform digests in [Dockerfile](Dockerfile). These pin the selected image content; platform and system-library differences still matter for experiments. Dependencies are installed inside the image and do not reuse the host `.venv`.
 
-[.dockerignore](.dockerignore) starts by excluding everything, then permits only the three project files required by this image. Docker still receives its build instructions as metadata. This keeps `.env`, secret files, `.venv`, `.git`, `docs/` answer keys, local datasets, run outputs, and unrelated files out of the build context. S06 exposes source and the approved XLS through selective runtime mounts; they remain excluded from the image.
+[.dockerignore](.dockerignore) starts by excluding everything, then permits only the three project files required by this image. Docker still receives its build instructions as metadata. This keeps `.env`, secret files, `.venv`, `.git`, `docs/` answer keys, local datasets, run outputs, and unrelated files out of the build context. Compose exposes source, tests, and the approved XLS through selective runtime mounts; they remain excluded from the image.
 
 ## S04 Compose development commands
 
@@ -110,10 +111,11 @@ Expect only `app` in the service listing, Python **3.12.16**, Ruff success, UID 
 | Configuration | Purpose |
 |---|---|
 | `build: .`, `image: reprolab-dev` | Builds and uses the pinned development image. |
-| Five read-only bind mounts | Expose `pyproject.toml`, `uv.lock`, README, `src/`, and only the approved `inputs/Concrete_Data.xls`. S06 adds the last two mounts; host edits are visible without copying the whole checkout. |
+| Six read-only bind mounts | Expose `pyproject.toml`, `uv.lock`, README, `src/`, `tests/`, and only the approved `inputs/Concrete_Data.xls`. Host edits are visible without copying the whole checkout. |
 | `create_host_path: false` | Fails for a missing source file instead of silently creating a host directory. |
 | `UV_LOCKED=1` | Makes `uv run` reject manifest/lock drift; it must not rewrite the mounted lockfile. |
 | `PYTHONPATH=/app/src` | Imports the mounted S06 package without adding a build backend or installing source on the host. |
+| `PYTEST_ADDOPTS=-p no:cacheprovider` | Disables pytest's persistent cache; test scratch files use scoped container `/tmp`. |
 | `checkpoint_state:/var/lib/reprolab` | Reserves Docker-managed storage for future SQLite checkpoints; no database is created in S04. The image pre-creates this path for UID/GID 10001 so a new volume can be used without root. |
 
 Dependencies remain inside `/opt/venv`, outside the bind mounts. `.env`, host `.venv`, `.git`, `docs/` answer keys, other input files, and run artifacts are not exposed by Compose. Build-context exclusions and runtime mount selection are separate controls. No Docker socket, privileged mode, ports, or additional service is configured.
@@ -428,6 +430,84 @@ Expected: only service `app`, locked dependency checks and Ruff pass, `S06 PASS`
 
 Understanding checks: Why remove identical full rows before splitting? How do retained IDs plus `duplicate_of` account for every original row? Why does seed 123 provide a repeatable development split without proving the published split?
 
+## S07 regression tests and verification
+
+[tests/test_experiment.py](tests/test_experiment.py) has **47 collected cases**. Most fixtures use 2–10 deterministic synthetic rows with literal expected outputs. The raw schema/cell checks generate a 1,030-row tuple in memory because that public validator requires exactly 1,030 rows; no dataset file is generated. Expected headers are independently specified, and reviewed literal split IDs come from the pinned RNG reference rather than being calculated by the function under test.
+
+| Category | What a failure would reveal |
+|---|---|
+| Raw validation | Changed exact headers, row/column counts, or acceptance of missing, text, boolean, or nonfinite cells |
+| File boundary | Missing input or parsing bytes before checking the approved checksum; the temporary parser sentinel is restored by pytest |
+| Duplicate handling | Sorting retained rows, keeping later occurrences, dropping IDs, wrong duplicate mappings/counts, or merging identical features with different targets |
+| Feature/target selection | Wrong columns, rounding/scaling, reordered values, or loss of original IDs |
+| Splitting | Wrong reviewed seed memberships, nonrepeatable output, overlapping/missing rows, misaligned features/targets/IDs, input mutation, or acceptance of invalid/omitted seeds and undeduplicated data |
+| Optional XLS integration | Drift from the approved SHA-256, 1,030 × 9 raw shape, 1,005 retained rows, or 703/302 partition counts; unexpected changes to original bytes |
+
+All tests use the already pinned pytest; no dependencies, production code, interpreter/image pins, or lockfile are changed by S07. Compose adds only a read-only tests mount and disables [pytest's cache provider](https://docs.pytest.org/en/stable/how-to/cache.html). The image already disables Python bytecode writes. Temporary test files use `TemporaryDirectory` under container `/tmp`, scoped for cleanup on success and failure.
+
+From the repository root with the existing S06 image available, run:
+
+```bash
+docker compose run --rm app uv run pytest --collect-only -q
+docker compose run --rm app uv run pytest -q
+docker compose run --rm -T app uv run --offline ruff check --no-cache .
+docker compose run --rm -T app ruff format --check src tests
+docker compose run --rm -T app uv lock --check --offline
+```
+
+Expected with the local approved XLS: **47 collected, 47 passed, 0 failed, 0 skipped**; Ruff lint/format and lock checks pass. The integration test skips only when the XLS path is absent; a present but wrong/corrupt file must fail. The Compose service requires its approved XLS bind source to exist before startup, so use this dataset-free route when no local dataset is available:
+
+```bash
+docker run --rm \
+  --mount "type=bind,source=$PWD/src,target=/app/src,readonly" \
+  --mount "type=bind,source=$PWD/tests,target=/app/tests,readonly" \
+  --env PYTHONPATH=/app/src \
+  --env 'PYTEST_ADDOPTS=-p no:cacheprovider' \
+  reprolab-dev pytest -q
+```
+
+This mounts no inputs and should report **47 collected, 46 passed, 0 failed, 1 skipped**, with the explicit integration skip reason. It uses the same non-root image and pinned environment, with no extra service, dataset download, or Excel-writing dependency.
+
+To demonstrate that a test detects a real fixture change, run the following. It changes only a temporary copy's feature-selection fixture target from `99.125` to `99.25`, keeps the independently specified expectation unchanged, and requires an assertion failure. It then restores the copy and requires the selected test to pass. The original mounted test file and XLS are not edited:
+
+```bash
+docker compose run --rm -T app python - <<'PY'
+import subprocess
+import tempfile
+from pathlib import Path
+
+source = Path('/app/tests/test_experiment.py')
+original = source.read_text()
+needle = '7.5, 8.0, 99.125'
+assert original.count(needle) == 1
+with tempfile.TemporaryDirectory(prefix='reprolab-s07-probe-', dir='/tmp') as scratch:
+    copy = Path(scratch) / 'test_experiment.py'
+    copy.write_text(original.replace(needle, '7.5, 8.0, 99.25', 1))
+    selected = str(copy) + '::test_feature_target_values_are_preserved'
+    command = ['python', '-m', 'pytest', '-q', '-c', '/app/pyproject.toml', selected]
+    changed = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    print(changed.stdout)
+    assert changed.returncode == 1, changed.stderr
+    assert 'AssertionError' in changed.stdout and '1 failed' in changed.stdout
+    copy.write_text(original)
+    restored = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    print(restored.stdout)
+    assert restored.returncode == 0 and '1 passed' in restored.stdout, restored.stderr
+assert not Path(scratch).exists()
+assert source.read_text() == original
+print('Expected fixture failure and restored pass verified; temporary copy removed.')
+PY
+docker compose run --rm app uv run pytest -q
+git diff --check
+git diff --cached --name-only
+git ls-files -- inputs/
+docker compose ps -a
+```
+
+Expected deliberate probe: **1 collected, 0 passed, 1 failed, 0 skipped**. Restored probe: **1 collected, 1 passed, 0 failed, 0 skipped**. The final full run returns to **47 passed**, showing repeatable results in a fresh process/container. No staged files, tracked datasets, whitespace issues, or leftover project containers should appear. Do not remove the checkpoint volume.
+
+These are data-contract regressions, not evidence of model accuracy or paper reproduction. Seed 123 remains a disclosed development choice. Review questions: Why retain rows with identical predictors but different strength targets? Why should a changed fixture fail against an unchanged expected value?
+
 ## Repository contents
 
 | Path | Purpose |
@@ -446,6 +526,7 @@ Understanding checks: Why remove identical full rows before splitting? How do re
 | `inputs/` (ignored, local only) | Unmodified UCI XLS and official README; not included in Git or the image |
 | `src/reprolab/__init__.py` | Minimal package marker |
 | `src/reprolab/experiment.py` | Verified XLS loading and pure validation, duplicate handling, selection, and split functions |
+| `tests/test_experiment.py` | Synthetic data/split regressions and optional read-only XLS integration |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.
 

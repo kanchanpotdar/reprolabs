@@ -8,6 +8,8 @@ services:
       # uv run must reject manifest/lock drift rather than rewrite a mounted lock.
       UV_LOCKED: "1"
       PYTHONPATH: /app/src
+      # Verification artifacts belong only in scoped /tmp, not the mounted tests.
+      PYTEST_ADDOPTS: -p no:cacheprovider
     volumes:
       # Selective, read-only development mounts; never expose the whole checkout.
       - type: bind
@@ -31,6 +33,12 @@ services:
       - type: bind
         source: ./src
         target: /app/src
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./tests
+        target: /app/tests
         read_only: true
         bind:
           create_host_path: false
