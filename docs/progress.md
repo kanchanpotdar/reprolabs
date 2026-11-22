@@ -1,10 +1,10 @@
 # ReproLab — human-verified progress
 
-- **Current step:** S04 — one-service Compose setup
-- **Current status:** APPROVED by the user
-- **Next step:** S05 implementation authorized separately; stop for review before any S05 commit/push or S06 work
-- **Approved steps:** S00 — APPROVED (CONDITIONAL); S01 and S02 — APPROVED, 2026-11-21; S03 and S04 — APPROVED, 2026-11-22
-- **Commit/push:** S00 + S01 pushed as `837a92101d5fbaec82a8c6bf73dc854758355860`; S02 pushed as `0835992e92ae3763008a4fb3d849f4169892cff8`; S03 pushed as `db5a995465f2bd2ee6c9a206b46adda1d5a27dc5`; S04 commit/push authorized, with SHA and verified remote outcome reported in the handoff
+- **Current step:** S05 — approved data acquisition and provenance
+- **Current status:** APPROVED by the user based on successful dataset verification
+- **Next step:** S06 scope explanation and read-only dependency/mount checks only; implementation requires explicit approval
+- **Approved steps:** S00 — APPROVED (CONDITIONAL); S01 and S02 — APPROVED, 2026-11-21; S03, S04, and S05 — APPROVED, 2026-11-22
+- **Commit/push:** S00 + S01 pushed as `837a92101d5fbaec82a8c6bf73dc854758355860`; S02 pushed as `0835992e92ae3763008a4fb3d849f4169892cff8`; S03 pushed as `db5a995465f2bd2ee6c9a206b46adda1d5a27dc5`; S04 pushed and remote-verified as `78745f7048325662169c63973b94429db29b2fe9`; S05 commit/push authorized, with SHA and remote verification reported in the handoff
 
 This file is authoritative for the human review gate. Update it in the **same commit** as each approved step. Do not advance a step merely because automated tests pass; record the human's verification first.
 
@@ -29,6 +29,7 @@ This file is authoritative for the human review gate. Update it in the **same co
 | S02 | mechanical | APPROVED | User approved after reviewing reported checks; individual personal commands were not supplied | APPROVED by user, 2026-11-21 (Asia/Kolkata) | Commit/push to origin/main authorized; see Git history/handoff for SHA and remote verification |
 | S03 | mechanical | APPROVED | User explicitly approved based on successful Docker verification; individual personal commands were not supplied | APPROVED by user, 2026-11-22 (Asia/Kolkata) | Commit/push to origin/main authorized; see Git history/handoff for SHA and remote verification |
 | S04 | mechanical | APPROVED | User explicitly approved S04; reported config/build/runtime/mount/persistence/cleanup results retained; individual personal commands were not supplied | APPROVED by user, 2026-11-22 (Asia/Kolkata) | Commit/push to origin/main authorized; see Git history/handoff for SHA and remote verification |
+| S05 | concept | APPROVED | User explicitly approved based on successful dataset verification; individual personal commands were not supplied | APPROVED by user, 2026-11-22 (Asia/Kolkata) | Commit/push to origin/main authorized; see Git history/handoff for SHA and remote verification |
 
 ### S00 approval record
 
@@ -103,6 +104,24 @@ This file is authoritative for the human review gate. Update it in the **same co
 - User decision: “I approve S04 — Docker Compose Setup” and separately authorized finalizing, committing, and pushing S04 with `build: add one-service Compose development setup`. Individual personal commands were not supplied and are not inferred.
 - Commit scope: `compose.yaml`, the Dockerfile permissions change, README, and this progress record. The resulting SHA and verified remote outcome are reported in the handoff; no follow-up commit is created merely to record its own hash.
 - The user separately authorized S05 acquisition/provenance after this push, with no model training, S05 commit/push, or S06 work. S05 results still require human review and explicit approval.
+
+### S05 approval record
+
+- User explicitly authorized S05 implementation on 2026-11-22 after finalizing S04. The user requested agent acquisition of the official data; this authorized downloading/caching it in place of the roadmap's human acquisition wording. That initial authorization excluded training, S05 commit/push, and S06 work; the subsequent approval and commit authorization are recorded below.
+- S04 was finalized first: reviewed/staged only `Dockerfile`, `README.md`, `compose.yaml`, and this progress record; committed with `build: add one-service Compose development setup`; pushed to `origin/main` as **`78745f7048325662169c63973b94429db29b2fe9`**. Local/remote refs and GitHub's main commit matched; the tree was clean before S05. No datasets or temporary files were included.
+- S05 changes only `README.md`, `docs/p01_ground_truth.md`, and this record. Retains two unmodified official files in ignored `inputs/`: `Concrete_Data.xls` (124,928 bytes) and `Concrete_Readme.txt` (3,808 bytes). No application module, tests, dataset conversion, extra manifest, or dependency/configuration change is added.
+- Acquired the official UCI dataset 165 ZIP over HTTPS inside non-root Compose, checked the exact two-member allowlist, byte sizes, ZIP SHA-256, and each member SHA-256 before writing. Download uses a 60-second socket timeout, 1 MB response bound, and no automatic retries. The temporary ZIP is scoped to `TemporaryDirectory` in container `/tmp` and removed on exit. Existing different local files are never overwritten. Zero paid calls; no author code executed.
+- ZIP SHA-256 `dad85d14de8aee4e07479daa774e6b569a313715b71a3b92c95a07cf91c2c9a7`; workbook SHA-256 `710076c66b9ca3f8050e7942f3dcbdbe04013534daeb0077ffd3079a52d8e0c4`; bundled README SHA-256 `5cd3cdb31d3cfd68287daa6b22ed0541d6932113e83ee0980ced63641af3441d`. ZIP/workbook match S00's independently acquired references. No publisher-supplied checksum/signature was found on the inspected record; these are locally observed snapshot hashes.
+- Read-only inspection used pinned `xlrd==2.0.2` with `uv run --locked --no-cache --no-build --with` in a disposable container. The legacy XLS reader is not in the image/project dependencies; no host packages were installed. HTTP timeout 60 seconds and retries 0 were used for the temporary reader installation. Both documented command blocks completed within individual 180-second verification caps.
+- Agent checks passed: OLE/BIFF 80 format; exact sheet names/dimensions and ordered literal headers; `Sheet1` **1,030 data rows × 9 columns** plus one header; `Sheet2`/`Sheet3` empty; all **9,270 data cells numeric and finite**. The initial assumption of exactly one workbook tab failed visibly; a corrected inspection verified the two empty extra tabs without changing the data.
+- Roles/units match the official description and bundled README: seven ingredient predictors in kg/m³, age in days, and the ninth-column strength target in MPa. Age is integer-valued 1–365 days; raw target range is 2.331807832–82.5992248 MPa. All 25 repeated full rows remain, yielding 1,005 distinct full-row tuples only for the inspection count. No deduplication, scaling, rounding, split, fitting, or experiment was performed.
+- Source discrepancies documented in ground truth: UCI's slag “Integer” label conflicts with 303 fractional stored values; current UCI donation date 2007-08-02 differs from the bundled README's August 3, 2007. Current UCI CC BY 4.0 license and the bundled historical attribution notice are both documented; Yeh's attribution is retained. No discrepancy was repaired by changing source bytes.
+- Exact README acquisition and verification blocks both passed as written, including repeated acquisition without overwriting, reproducible hashes, altered-byte hash rejection in memory, UID/GID 10001, read-only input mount, raw-byte preservation, metadata-unit checks, ignored paths, no tracked/staged inputs, unchanged environment/configuration, whitespace check, and empty project container list. This is dataset/provenance verification, not a passing application/model test suite.
+- Cleanup: temporary ZIP, disposable reader environment/cache, and verification containers removed; only the two meaningful ignored source files retained. Existing Docker image, cache, network, and `reprolab_checkpoint_state` volume preserved. No `runs/` or experiment artifacts created.
+- User decision: “I approve S05 based on the successful dataset verification.” The same message separately authorizes final review, committing with `data: document UCI concrete dataset provenance`, and pushing S05 to `origin/main`.
+- Human-observed review: approval based on the reported dataset verification is explicit; individual commands personally run by the human were not supplied and are not inferred. Scientific candidate approval remains CONDITIONAL with the holdout seed and final LR settings unresolved.
+- Commit scope: `README.md`, `docs/p01_ground_truth.md`, and this progress record. Raw inputs remain ignored and untracked. The resulting SHA and verified push are reported in the handoff; no follow-up commit is created merely to record its own hash.
+- After the S05 push, the user authorizes reading only S06, explaining its proposed implementation, and checking current Compose/dependency support. **S06 implementation remains unapproved**; no application files or S06 dependency/mount changes are authorized yet.
 
 ### Entry template for approved steps
 

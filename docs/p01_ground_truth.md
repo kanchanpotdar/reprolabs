@@ -159,4 +159,55 @@ Understanding prompts for review:
 2. Why is `LinearRegression()` at construction insufficient evidence that the final estimator kept default settings?
 3. Why would matching RMSE alone fail to demonstrate reproduction?
 
-Approval record: **S00 APPROVED CONDITIONAL by the user, 2026-11-21 (Asia/Kolkata)**. The user explicitly accepted the unresolved seed and Linear Regression settings; no individual manual commands or source checks were reported. `docs/progress.md` records the decision. The user subsequently approved S01 subject to its checks passing and separately authorized including this S00 evidence in the combined initial S00 + S01 commit and push. The commit SHA and push verification are reported in the handoff. S02 implementation still requires separate approval.
+Approval record: **S00 APPROVED CONDITIONAL by the user, 2026-11-21 (Asia/Kolkata)**. The user explicitly accepted the unresolved seed and Linear Regression settings; no individual manual commands or source checks were reported. `docs/progress.md` records the decision. The user subsequently approved S01 subject to its checks passing and separately authorized including this S00 evidence in the combined initial S00 + S01 commit and push. Later implementation approvals are recorded in `docs/progress.md`.
+
+## 8. S05 acquisition and provenance — observed 2026-11-22
+
+**Scope:** authorized acquisition and read-only inspection of the raw UCI data. The preceding S00 observations remain historical; the checks below add workbook-level evidence. The user approved S05 on 2026-11-22 based on successful dataset verification; individual personal commands were not supplied. No model, split, preprocessing, or metric computation was run.
+
+### Source identity, license, and retained files
+
+- Canonical record: [UCI Concrete Compressive Strength, dataset 165](https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength); stable identifier [DOI 10.24432/C5PK67](https://doi.org/10.24432/C5PK67).
+- Official acquisition URL: [UCI ZIP](https://archive.ics.uci.edu/static/public/165/concrete%2Bcompressive%2Bstrength.zip), retrieved over verified HTTPS on **2026-11-22 (Asia/Kolkata)**. No numbered dataset release is exposed by the inspected record; the retrieval date and hashes identify this snapshot. The citation's 1998 is the research/citation year, not an archive version.
+- Attribution: **Yeh, I. (1998). Concrete Compressive Strength [Dataset]. UCI Machine Learning Repository. https://doi.org/10.24432/C5PK67.** Original creator/donor: I-Cheng Yeh. The bundled README also requests retention of credit and the reference to Yeh, “Modeling of strength of high performance concrete using artificial neural networks,” *Cement and Concrete Research* 28(12), 1797–1808 (1998).
+- The current UCI record explicitly identifies **[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)**. Retain creator/source attribution and the license link, and identify any later changes. The bundled historical README uses an unlimited-reuse notice with attribution rather than the current CC identifier; it is retained verbatim. **No changes to either downloaded file.**
+
+| Artifact | Local retention | Bytes | Observed SHA-256 |
+|---|---|---:|---|
+| Official ZIP | Temporary container `/tmp` only; removed | 34,444 | `dad85d14de8aee4e07479daa774e6b569a313715b71a3b92c95a07cf91c2c9a7` |
+| `Concrete_Data.xls` | Ignored `inputs/Concrete_Data.xls` | 124,928 | `710076c66b9ca3f8050e7942f3dcbdbe04013534daeb0077ffd3079a52d8e0c4` |
+| `Concrete_Readme.txt` | Ignored `inputs/Concrete_Readme.txt` | 3,808 | `5cd3cdb31d3cfd68287daa6b22ed0541d6932113e83ee0980ced63641af3441d` |
+
+All archive members were checked against this exact two-file allowlist before writing; sizes and SHA-256 values matched. ZIP/workbook identity matches the independent S00 acquisition. These are **locally computed reference checksums**: no publisher-supplied checksum or signature was found on the inspected UCI record. They detect a changed snapshot; they do not authenticate historical Table 6 split membership.
+
+### Workbook structure and exact ordered schema
+
+Observed with **Python 3.12.16 / xlrd 2.0.2**, inside the existing non-root Compose container, with inputs mounted read-only for inspection. xlrd was an ephemeral verification dependency, not added to the project or lockfile. File signature `d0cf11e0a1b11ae1` and reader-reported **BIFF 80** identify a legacy Excel 97–2003 binary `.xls` workbook in an OLE compound file, not CSV or `.xlsx`.
+
+- `Sheet1`: **1,031 physical rows including the header**, nine columns. Data range **A2:I1031**, exactly **1,030 observations**, eight predictors plus one target.
+- `Sheet2` and `Sheet3`: **0 rows, 0 columns**. The initial single-tab inspection assumption failed; inspection was corrected to account for the two empty tabs. No data was discarded.
+- All **9,270** data cells have numeric Excel type and finite values; no blank, text, error, or nonfinite data cells were found. This independently supports UCI's no-missing-values description.
+- **25 duplicate rows beyond first occurrences**, comparing all nine numeric values; **1,005 distinct full rows**. This is a read-only count, not deduplication. All 1,030 original rows, their order, precision, and workbook bytes remain intact.
+
+The literal headers below use Python string notation so doubled spaces and the target's trailing space are visible. Roles and units come from the UCI variable listing and the bundled README, and agree with the workbook labels; reading numeric cells alone does not establish physical units.
+
+| Column | Exact header (`repr`) | Role | Source unit |
+|---|---|---|---|
+| A | `'Cement (component 1)(kg in a m^3 mixture)'` | Predictor | kg/m³ |
+| B | `'Blast Furnace Slag (component 2)(kg in a m^3 mixture)'` | Predictor | kg/m³ |
+| C | `'Fly Ash (component 3)(kg in a m^3 mixture)'` | Predictor | kg/m³ |
+| D | `'Water  (component 4)(kg in a m^3 mixture)'` | Predictor | kg/m³ |
+| E | `'Superplasticizer (component 5)(kg in a m^3 mixture)'` | Predictor | kg/m³ |
+| F | `'Coarse Aggregate  (component 6)(kg in a m^3 mixture)'` | Predictor | kg/m³ |
+| G | `'Fine Aggregate (component 7)(kg in a m^3 mixture)'` | Predictor | kg/m³ |
+| H | `'Age (day)'` | Predictor | days |
+| I | `'Concrete compressive strength(MPa, megapascals) '` | **Target** | **MPa** |
+
+### Observed discrepancies and limits
+
+1. **Slag type:** the current UCI variable table labels slag “Integer”; **303 of 1,030 stored slag values are fractional**, range 0–359.4 kg/m³. The bundled README calls it quantitative. Preserve its numeric precision; integer coercion would corrupt the source. Age is integer-valued, range **1–365 days**, agreeing with the description.
+2. **Donation date:** the current UCI page displays **2007-08-02**, while the bundled README explicitly says **August 3, 2007**. Cause unknown; preserve both source statements. Neither date is a version identifier or this acquisition date.
+3. **Precision:** the observed raw target range is **2.331807832–82.5992248 MPa**, consistent with the paper's rounded 2.33–82.6 range. Do not round or resave the workbook to make the displayed values match.
+4. **Protocol:** the confirmed raw/unique row counts support the reported 1,030 → 1,005 distinction. They do not resolve the previously documented holdout seed or final Linear Regression settings. The candidate remains **CONDITIONAL**, with no reproduced result.
+
+**S05 verdict:** acquisition pass conditions are met: official source and attribution documented, byte identity reproducible, raw 1,030 × 9 shape and target/units verified, metadata discrepancies disclosed. **S05 APPROVED by the user, 2026-11-22, based on successful dataset verification.** This approval does not resolve the paper's seed or LR settings and is not a reproduction verdict. Exact acquisition and verification commands are in [README S05](../README.md#s05-dataset-acquisition-and-verification). A checksum mismatch must stop acquisition/verification for review; never silently replace the approved digest or overwrite a different local file.

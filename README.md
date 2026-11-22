@@ -4,7 +4,7 @@ An evidence-driven research reproducibility agent, planned to reconstruct an ML 
 
 ## Current state
 
-This repository contains project instructions, a staged roadmap, a paper feasibility review, a pinned Python environment, and a one-service Docker Compose development configuration. There is no application, runnable CLI, or model experiment yet.
+This repository contains project instructions, a staged roadmap, a paper feasibility review, a pinned Python environment, a one-service Docker Compose development configuration, and verified local UCI dataset provenance. There is no application, runnable CLI, or model experiment yet.
 
 | Step | State | Evidence |
 |---|---|---|
@@ -13,6 +13,7 @@ This repository contains project instructions, a staged roadmap, a paper feasibi
 | S02 — Reproducible Python environment and checks | Human-approved, 2026-11-21, after review of reported checks | `pyproject.toml`, `uv.lock`, and [approval record](docs/progress.md) |
 | S03 — Development Docker image | Human-approved, 2026-11-22, based on successful Docker verification | `Dockerfile` and `.dockerignore`; results in [progress](docs/progress.md) |
 | S04 — One-service Compose setup | Human-approved, 2026-11-22 | `compose.yaml`; results in [progress](docs/progress.md) |
+| S05 — Dataset acquisition and provenance | Human-approved, 2026-11-22, based on successful dataset verification | Ignored raw inputs; [source identity, schema, units, license, and discrepancies](docs/p01_ground_truth.md#8-s05-acquisition-and-provenance--observed-2026-11-22) |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
@@ -143,6 +144,137 @@ unset S04_PROBE_NAME
 docker compose ps -a
 ```
 
+## S05 dataset acquisition and verification
+
+Provenance connects the data used locally to an identifiable source: official URL → unchanged downloaded bytes → checksum → inspected schema. A hash pins the file snapshot; it does not establish the paper's historical training split. The [S05 evidence](docs/p01_ground_truth.md#8-s05-acquisition-and-provenance--observed-2026-11-22) records the source, exact headers, units, license, and observed metadata discrepancies.
+
+From this repository root with Docker running, the following acquisition command is optional if the two verified files are already present. It downloads only the official UCI archive, validates every member before writing, and refuses to overwrite a different local file. It has a 60-second network socket timeout, a 1 MB response limit, and no automatic retries. It retains only the original XLS and official README; the ZIP is scoped to container `/tmp` and cleaned even on failure. No host Python packages are installed.
+
+```bash
+mkdir -p inputs
+docker compose run --rm -T --volume "$PWD/inputs:/app/inputs" app python - <<'PY'
+import hashlib
+import tempfile
+import urllib.request
+import zipfile
+from pathlib import Path
+
+url = 'https://archive.ics.uci.edu/static/public/165/concrete%2Bcompressive%2Bstrength.zip'
+expected = {
+    'Concrete_Data.xls': (124928, '710076c66b9ca3f8050e7942f3dcbdbe04013534daeb0077ffd3079a52d8e0c4'),
+    'Concrete_Readme.txt': (3808, '5cd3cdb31d3cfd68287daa6b22ed0541d6932113e83ee0980ced63641af3441d'),
+}
+with tempfile.TemporaryDirectory(prefix='reprolab-s05-', dir='/tmp') as scratch:
+    archive = Path(scratch) / 'uci.zip'
+    with urllib.request.urlopen(url, timeout=60) as response:
+        blob = response.read(1_000_001)
+    assert len(blob) == 34444, f'Unexpected ZIP size: {len(blob)}'
+    assert hashlib.sha256(blob).hexdigest() == 'dad85d14de8aee4e07479daa774e6b569a313715b71a3b92c95a07cf91c2c9a7'
+    archive.write_bytes(blob)
+    with zipfile.ZipFile(archive) as z:
+        assert sorted(z.namelist()) == sorted(expected), z.namelist()
+        payloads = {}
+        for name, (size, digest) in expected.items():
+            assert z.getinfo(name).file_size == size
+            data = z.read(name)
+            assert hashlib.sha256(data).hexdigest() == digest, name
+            payloads[name] = data
+        # Check every file before writing; preserve any different local file.
+        for name, data in payloads.items():
+            destination = Path('/app/inputs') / name
+            if destination.exists():
+                assert destination.read_bytes() == data, f'Refusing to overwrite {name}'
+        for name, data in payloads.items():
+            destination = Path('/app/inputs') / name
+            if not destination.exists():
+                with destination.open('xb') as f:
+                    f.write(data)
+            print(name, len(data), hashlib.sha256(data).hexdigest())
+assert not Path(scratch).exists()
+print('Acquisition PASS; temporary ZIP removed.')
+PY
+```
+
+Run this read-only verification command, including when reusing existing files. `xlrd==2.0.2` reads the legacy binary XLS in a disposable uv environment; `--with` adds no project dependency and does not update `uv.lock`. `--no-cache` uses temporary package storage, and `--rm` removes the container. Only `inputs/` is added as a read-only mount; no `docs/` answer key is exposed. Each invocation needs public PyPI access for the pinned reader; HTTP retries are disabled and each request has a 60-second timeout.
+
+```bash
+docker compose run --rm -T --volume "$PWD/inputs:/app/inputs:ro" \
+  --env UV_HTTP_TIMEOUT=60 --env UV_HTTP_RETRIES=0 \
+  app uv run --locked --no-cache --no-build --with xlrd==2.0.2 python - <<'PY'
+import hashlib
+import math
+import os
+from pathlib import Path
+import xlrd
+
+root = Path('/app/inputs')
+expected = {
+    'Concrete_Data.xls': (124928, '710076c66b9ca3f8050e7942f3dcbdbe04013534daeb0077ffd3079a52d8e0c4'),
+    'Concrete_Readme.txt': (3808, '5cd3cdb31d3cfd68287daa6b22ed0541d6932113e83ee0980ced63641af3441d'),
+}
+assert os.getuid() == os.getgid() == 10001
+assert os.statvfs(root).f_flag & os.ST_RDONLY, 'Input mount must be read-only'
+assert xlrd.__version__ == '2.0.2'
+for name, (size, digest) in expected.items():
+    data = (root / name).read_bytes()
+    assert len(data) == size and hashlib.sha256(data).hexdigest() == digest, name
+    print(name, 'SHA-256 PASS', digest)
+path = root / 'Concrete_Data.xls'
+raw = path.read_bytes()
+assert raw[:8].hex() == 'd0cf11e0a1b11ae1'
+# An altered byte must not satisfy the approved file identity.
+assert hashlib.sha256(raw[:-1] + bytes([raw[-1] ^ 1])).hexdigest() != expected[path.name][1]
+headers = [
+    'Cement (component 1)(kg in a m^3 mixture)',
+    'Blast Furnace Slag (component 2)(kg in a m^3 mixture)',
+    'Fly Ash (component 3)(kg in a m^3 mixture)',
+    'Water  (component 4)(kg in a m^3 mixture)',
+    'Superplasticizer (component 5)(kg in a m^3 mixture)',
+    'Coarse Aggregate  (component 6)(kg in a m^3 mixture)',
+    'Fine Aggregate (component 7)(kg in a m^3 mixture)',
+    'Age (day)',
+    'Concrete compressive strength(MPa, megapascals) ',
+]
+with xlrd.open_workbook(path, on_demand=True) as workbook:
+    assert workbook.biff_version == 80
+    assert [(s.name, s.nrows, s.ncols) for s in workbook.sheets()] == [
+        ('Sheet1', 1031, 9), ('Sheet2', 0, 0), ('Sheet3', 0, 0),
+    ]
+    sheet = workbook.sheet_by_name('Sheet1')
+    assert sheet.row_values(0) == headers
+    rows = [tuple(sheet.row_values(r)) for r in range(1, 1031)]
+    assert all(sheet.cell_type(r, c) == xlrd.XL_CELL_NUMBER
+               for r in range(1, 1031) for c in range(9))
+    assert all(math.isfinite(v) for row in rows for v in row)
+    assert len(rows) == 1030 and len(set(rows)) == 1005
+    assert all(row[7].is_integer() and 1 <= row[7] <= 365 for row in rows)
+    assert sum(not row[1].is_integer() for row in rows) == 303
+    assert (min(row[8] for row in rows), max(row[8] for row in rows)) == (2.331807832, 82.5992248)
+    for index, header in enumerate(headers, 1):
+        print(index, repr(header))
+metadata = (root / 'Concrete_Readme.txt').read_text()
+for description in ('kg in a m3 mixture -- Input Variable',
+                    'Day (1~365) -- Input Variable', 'MPa -- Output Variable'):
+    assert description in metadata
+assert path.read_bytes() == raw
+print('S05 PASS: 1030 rows, 8 predictors + target; 9270 finite numeric cells.')
+print('Units: seven ingredients kg/m^3; age days; target strength MPa.')
+print('25 repeated full rows retained; 303 fractional slag values retained; no training.')
+PY
+git check-ignore -v inputs/Concrete_Data.xls inputs/Concrete_Readme.txt
+git ls-files -- inputs/
+git diff --exit-code -- pyproject.toml uv.lock Dockerfile compose.yaml .dockerignore .gitignore
+git diff --cached --name-only
+git diff --check
+docker compose ps -a
+```
+
+Expected: `S05 PASS`, both input paths ignored by `/inputs/`, no tracked inputs or staged files, unchanged environment/configuration, no whitespace errors, and no remaining project containers. All 1,030 rows remain in the original file; counting duplicates does not remove them. No application tests exist yet, and this command does not train a model.
+
+Manually open the [UCI record](https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength) to compare the eight feature roles, target, units, and CC BY 4.0 license with the provenance table. Attribution: **Yeh, I. (1998). Concrete Compressive Strength [Dataset]. UCI Machine Learning Repository. [DOI 10.24432/C5PK67](https://doi.org/10.24432/C5PK67)**, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Raw files are unmodified; the bundled attribution notice is retained. Review the documented page/README donation-date difference and the slag integer-label discrepancy. If any hash or schema assertion fails, stop for source review; do not resave the workbook or change the reference hash to suppress the failure.
+
+Review questions: What does the checksum establish about the source file? Why should slag retain fractional values? Why does verifying 25 duplicates leave the paper's seed and LR settings unresolved?
+
 ## Repository contents
 
 | Path | Purpose |
@@ -158,6 +290,7 @@ docker compose ps -a
 | `Dockerfile` | Pinned Python/uv image, locked in-image environment, and non-root development runtime |
 | `.dockerignore` | Minimal build-context allowlist |
 | `compose.yaml` | One development service, selective live file mounts, and the checkpoint state volume |
+| `inputs/` (ignored, local only) | Unmodified UCI XLS and official README; not included in Git or the image |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.
 
