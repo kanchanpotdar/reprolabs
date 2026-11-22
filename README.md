@@ -4,7 +4,7 @@ An evidence-driven research reproducibility agent, planned to reconstruct an ML 
 
 ## Current state
 
-This repository contains project instructions, a staged roadmap, a paper feasibility review, a pinned Python environment, and a Docker development image configuration. There is no application, runnable CLI, or model experiment yet.
+This repository contains project instructions, a staged roadmap, a paper feasibility review, a pinned Python environment, and a one-service Docker Compose development configuration. There is no application, runnable CLI, or model experiment yet.
 
 | Step | State | Evidence |
 |---|---|---|
@@ -12,6 +12,7 @@ This repository contains project instructions, a staged roadmap, a paper feasibi
 | S01 — Repository hygiene | Human-approved, 2026-11-21; reported checks rerun successfully | This README, `.gitignore`, local Git initialization, and [approval record](docs/progress.md) |
 | S02 — Reproducible Python environment and checks | Human-approved, 2026-11-21, after review of reported checks | `pyproject.toml`, `uv.lock`, and [approval record](docs/progress.md) |
 | S03 — Development Docker image | Human-approved, 2026-11-22, based on successful Docker verification | `Dockerfile` and `.dockerignore`; results in [progress](docs/progress.md) |
+| S04 — One-service Compose setup | Human-approved, 2026-11-22 | `compose.yaml`; results in [progress](docs/progress.md) |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
@@ -78,7 +79,7 @@ Expected versions are Python **3.12.16**, uv **0.13.8**, sklearn **1.6.1**, and 
 | `FROM python:3.12.16-slim-bookworm@sha256:...` | Selects the exact Python release and immutable Debian Bookworm slim image index. |
 | `COPY --from=ghcr.io/astral-sh/uv:0.13.8@sha256:...` | Copies the pinned official uv executable into the image; no installer script is run. |
 | `ENV` | Places the image's `/opt/venv/bin` first on PATH, selects `/opt/venv` for uv, disables interpreter downloads, and configures Python output/bytecode behavior. |
-| First `RUN` | Creates user/group `reprolab` with UID/GID 10001, its home, and writable `/app` and `/opt/venv` directories. |
+| First `RUN` | Creates user/group `reprolab` with UID/GID 10001, its home, and writable `/app`, `/opt/venv`, and checkpoint mount directory `/var/lib/reprolab`. |
 | `WORKDIR /app` | Sets the working directory for later build instructions and runtime commands. |
 | Project `COPY --chown=...` | Copies only `pyproject.toml`, `uv.lock`, and this README, owned by the unprivileged user. |
 | `USER reprolab:reprolab` | Runs subsequent build instructions and containers without root privileges. |
@@ -88,6 +89,59 @@ Expected versions are Python **3.12.16**, uv **0.13.8**, sklearn **1.6.1**, and 
 The Python and uv references include registry-verified multi-platform digests in [Dockerfile](Dockerfile). These pin the selected image content; platform and system-library differences still matter for experiments. Dependencies are installed inside the image and do not reuse the host `.venv`.
 
 [.dockerignore](.dockerignore) starts by excluding everything, then permits only the three project files required by this image. Docker still receives its build instructions as metadata. This keeps `.env`, secret files, `.venv`, `.git`, `docs/` answer keys, local datasets, run outputs, and unrelated files out of the build context. Future source inclusion must be added deliberately in its creating step; S03 does not add Compose or application source.
+
+## S04 Compose development commands
+
+[compose.yaml](compose.yaml) defines exactly one service, `app`, using the existing Dockerfile and non-root user. It uses the stable project name `reprolab`. From the repository root:
+
+```bash
+docker compose config --services
+docker compose build
+docker compose run --rm app python --version
+docker compose run --rm app uv run ruff check .
+docker compose run --rm app id -u
+docker compose ps -a
+```
+
+Expect only `app` in the service listing, Python **3.12.16**, Ruff success, UID **10001**, and no leftover verification containers. Ruff currently validates the environment/configuration; there is no application code to lint yet. Compose runs commands in disposable containers; the named checkpoint volume persists after those containers exit.
+
+| Configuration | Purpose |
+|---|---|
+| `build: .`, `image: reprolab-dev` | Builds and uses the pinned development image. |
+| Three read-only bind mounts | Expose only current `pyproject.toml`, `uv.lock`, and `README.md` at `/app`. Host edits are read on the next one-off run. Application source/test directories will be mounted when those files exist; S04 creates no empty scaffolding. |
+| `create_host_path: false` | Fails for a missing source file instead of silently creating a host directory. |
+| `UV_LOCKED=1` | Makes `uv run` reject manifest/lock drift; it must not rewrite the mounted lockfile. |
+| `checkpoint_state:/var/lib/reprolab` | Reserves Docker-managed storage for future SQLite checkpoints; no database is created in S04. The image pre-creates this path for UID/GID 10001 so a new volume can be used without root. |
+
+Dependencies remain inside `/opt/venv`, outside the bind mounts. The whole repository is not mounted: `.env`, host `.venv`, `.git`, `docs/` answer keys, inputs, and run artifacts are not exposed by this configuration. Build-context exclusions and runtime mount selection are separate controls. No Docker socket, privileged mode, ports, or additional service is configured.
+
+On macOS/Windows, bind-mounted SQLite files may lock or perform poorly. Keep future state at `/var/lib/reprolab/state.sqlite` in the named volume, not under a source mount or `runs/`. With the default project name, Docker calls this volume `reprolab_checkpoint_state`. It is intentionally retained; avoid `docker compose down -v` or volume pruning when preserving checkpoints.
+
+To verify non-root persistence across two containers, run this in the same shell. It creates an exclusive, uniquely named marker and removes only that marker after confirming its contents:
+
+```bash
+export S04_PROBE_NAME=".s04-verify-$(date +%s)-$$"
+docker compose run --rm -T -e S04_PROBE_NAME app python - <<'PY'
+import os
+from pathlib import Path
+assert os.getuid() == os.getgid() == 10001
+p = Path('/var/lib/reprolab') / os.environ['S04_PROBE_NAME']
+with p.open('x') as f:
+    f.write('s04-persistence-ok\n')
+print('non-root write passed')
+PY
+docker compose run --rm -T -e S04_PROBE_NAME app python - <<'PY'
+import os
+from pathlib import Path
+assert os.getuid() == os.getgid() == 10001
+p = Path('/var/lib/reprolab') / os.environ['S04_PROBE_NAME']
+assert p.read_text() == 's04-persistence-ok\n'
+p.unlink()
+print('persistence and marker cleanup passed')
+PY
+unset S04_PROBE_NAME
+docker compose ps -a
+```
 
 ## Repository contents
 
@@ -103,6 +157,7 @@ The Python and uv references include registry-verified multi-platform digests in
 | `uv.lock` | Resolved package versions, sources, and artifact hashes for locked synchronization |
 | `Dockerfile` | Pinned Python/uv image, locked in-image environment, and non-root development runtime |
 | `.dockerignore` | Minimal build-context allowlist |
+| `compose.yaml` | One development service, selective live file mounts, and the checkpoint state volume |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.
 

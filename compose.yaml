@@ -1,0 +1,36 @@
+name: reprolab
+
+services:
+  app:
+    build: .
+    image: reprolab-dev
+    environment:
+      # uv run must reject manifest/lock drift rather than rewrite a mounted lock.
+      UV_LOCKED: "1"
+    volumes:
+      # Mount current development inputs only; add source directories when created.
+      - type: bind
+        source: ./pyproject.toml
+        target: /app/pyproject.toml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./uv.lock
+        target: /app/uv.lock
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./README.md
+        target: /app/README.md
+        read_only: true
+        bind:
+          create_host_path: false
+      # Docker-managed storage reserved for a future SQLite checkpointer.
+      - type: volume
+        source: checkpoint_state
+        target: /var/lib/reprolab
+
+volumes:
+  checkpoint_state:

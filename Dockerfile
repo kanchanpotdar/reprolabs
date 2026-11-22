@@ -14,8 +14,8 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
 # Create a fixed, unprivileged identity and its writable development paths.
 RUN groupadd --gid 10001 reprolab \
     && useradd --no-log-init --uid 10001 --gid reprolab --create-home --shell /bin/sh reprolab \
-    && mkdir -p /app /opt/venv \
-    && chown reprolab:reprolab /app /opt/venv
+    && mkdir -p /app /opt/venv /var/lib/reprolab \
+    && chown reprolab:reprolab /app /opt/venv /var/lib/reprolab
 
 WORKDIR /app
 

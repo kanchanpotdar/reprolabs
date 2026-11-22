@@ -1,10 +1,10 @@
 # ReproLab — human-verified progress
 
-- **Current step:** S03 — development Docker image
-- **Current status:** APPROVED by the user based on successful Docker verification
-- **Next step:** Read and explain S04 only; implementation requires separate approval
-- **Approved steps:** S00 — APPROVED (CONDITIONAL); S01 and S02 — APPROVED, 2026-11-21; S03 — APPROVED, 2026-11-22
-- **Commit/push:** S00 + S01 pushed as `837a92101d5fbaec82a8c6bf73dc854758355860`; S02 pushed as `0835992e92ae3763008a4fb3d849f4169892cff8`; S03 commit/push authorized, with SHA and verified remote outcome reported in the handoff
+- **Current step:** S04 — one-service Compose setup
+- **Current status:** APPROVED by the user
+- **Next step:** S05 implementation authorized separately; stop for review before any S05 commit/push or S06 work
+- **Approved steps:** S00 — APPROVED (CONDITIONAL); S01 and S02 — APPROVED, 2026-11-21; S03 and S04 — APPROVED, 2026-11-22
+- **Commit/push:** S00 + S01 pushed as `837a92101d5fbaec82a8c6bf73dc854758355860`; S02 pushed as `0835992e92ae3763008a4fb3d849f4169892cff8`; S03 pushed as `db5a995465f2bd2ee6c9a206b46adda1d5a27dc5`; S04 commit/push authorized, with SHA and verified remote outcome reported in the handoff
 
 This file is authoritative for the human review gate. Update it in the **same commit** as each approved step. Do not advance a step merely because automated tests pass; record the human's verification first.
 
@@ -28,6 +28,7 @@ This file is authoritative for the human review gate. Update it in the **same co
 | S01 | mechanical | APPROVED | User approved subject to reported checks passing; the agent reran those checks successfully; personal commands were not separately supplied | APPROVED by user, 2026-11-21 (Asia/Kolkata) | Authorized initial commit with S00 to origin/main; see Git history/handoff for SHA and push verification |
 | S02 | mechanical | APPROVED | User approved after reviewing reported checks; individual personal commands were not supplied | APPROVED by user, 2026-11-21 (Asia/Kolkata) | Commit/push to origin/main authorized; see Git history/handoff for SHA and remote verification |
 | S03 | mechanical | APPROVED | User explicitly approved based on successful Docker verification; individual personal commands were not supplied | APPROVED by user, 2026-11-22 (Asia/Kolkata) | Commit/push to origin/main authorized; see Git history/handoff for SHA and remote verification |
+| S04 | mechanical | APPROVED | User explicitly approved S04; reported config/build/runtime/mount/persistence/cleanup results retained; individual personal commands were not supplied | APPROVED by user, 2026-11-22 (Asia/Kolkata) | Commit/push to origin/main authorized; see Git history/handoff for SHA and remote verification |
 
 ### S00 approval record
 
@@ -83,7 +84,25 @@ This file is authoritative for the human review gate. Update it in the **same co
 - User decision: “I approve S03 based on the successful Docker verification.” The same message separately authorizes final diff review, staging only intended files, committing with `build: add pinned non-root Docker development image`, and pushing to `origin/main`.
 - Human-observed review: approval based on the reported Docker verification is explicit; individual commands personally run by the human were not supplied and are not inferred. The recorded platform limitation and absence of model/application tests remain unchanged.
 - Commit scope: `Dockerfile`, `.dockerignore`, `README.md`, and this progress record. The handoff reports the resulting SHA and verified remote outcome; no follow-up commit is created merely to record its own hash.
-- S04 purpose/proposal/testing explanation is requested; implementation remains unauthorized until a separate explicit approval.
+- At the S03 handoff only an S04 explanation was requested. The user subsequently authorized S04 implementation separately, as recorded below.
+
+### S04 approval record
+
+- User authorization on 2026-11-22: implement one Compose `app` service, selective source mounts, and a named volume for future SQLite; adjust Dockerfile only for permissions; verify runtime, non-root access, persistence, and container cleanup. Stop before commit, push, or S05.
+- One new file, `compose.yaml`; Dockerfile change only extends existing directory creation/ownership to `/var/lib/reprolab`. README/progress changes document this step. Dependencies, base-image digests, lockfile, and scientific ground truth remain unchanged.
+- Mount scope: only existing `pyproject.toml`, `uv.lock`, and README are bound read-only into `/app`, with `create_host_path: false`. There is no application source yet; no empty source/test/input/run directories are created. Host secrets, `.venv`, Git history, and `docs/` answer keys are not mounted. Dependencies remain at `/opt/venv`.
+- Stable Compose project name `reprolab`; exactly one `app` service, image `reprolab-dev`, and named volume `checkpoint_state` at `/var/lib/reprolab` (default Docker name `reprolab_checkpoint_state`). `UV_LOCKED=1` enforces locked `uv run` behavior. No privileged mode, Docker socket, published ports, or extra service is configured.
+- Resource budget: zero paid calls; build timeout configurable via `REPROLAB_S04_BUILD_TIMEOUT_SECONDS`, default 900 seconds per attempt, at most one retry for a diagnosed download failure. No host project package installation or model experiment is part of S04.
+- Compose v5.7.0 is available. `docker compose config --services` reports only `app`; parsed configuration checks passed for the three read-only file mounts, missing-path protection, named volume, and absence of privileged/port/device configuration.
+- Build passed on the first attempt within the 900-second cap: `docker compose build` installed 12 locked packages inside the image and printed Python 3.12.16 / uv 0.13.8. Dependency downloads took about 10 minutes 41 seconds; no retry, source compilation, lockfile change, or host dependency installation was needed. Built/tested platform: **linux/arm64**. Local image ID/digest: `sha256:80732adc1d14c2369d5983fa83db503e2e0c3babea6a9b0778b2bb772e53e9c5`.
+- Required runtime checks passed: `docker compose run --rm app python --version` → **Python 3.12.16**; `docker compose run --rm app uv run ruff check .` → **All checks passed!**. Additional checks returned UID **10001**, uv **0.13.8**, and sklearn **1.6.1**. Verification containers used unique task-scoped names alongside `--rm` so their removal could be checked explicitly.
+- Permission/mount assertions passed: UID/GID both 10001; `/opt/venv` remains the dependency environment; `UV_LOCKED=1` is present; all three mounted file hashes match current host files; Linux mount metadata confirms each bind mount is read-only; `/app` exposes only those three files. The named state directory is owned by UID/GID 10001 and is readable/writable/traversable without root. A scoped scratch file under `/tmp` was removed after its context exited.
+- Persistence passed across two different containers: the first created an exclusive UUID-named marker in `/var/lib/reprolab`, then was removed; the second read the exact marker contents and deleted only that marker. No SQLite database, checkpointer, or application source was created.
+- Cleanup passed: each of the eight successful verification containers was absent after its `--rm` run; project container IDs matched the empty pre-check baseline; `docker compose ps -a` showed only headers. There were no pre-existing project containers or checkpoint volume before these checks. The newly created `reprolab_checkpoint_state` volume remains intentionally reserved for future state; it was not deleted. The image, build cache, and normal project network also remain available.
+- macOS/Windows caveat: SQLite state belongs in Docker's named volume, not in bind-mounted source or `runs/`, to avoid the project's documented locking/performance caveat. S04 reserves storage only; it creates no SQLite database or checkpointer implementation.
+- User decision: “I approve S04 — Docker Compose Setup” and separately authorized finalizing, committing, and pushing S04 with `build: add one-service Compose development setup`. Individual personal commands were not supplied and are not inferred.
+- Commit scope: `compose.yaml`, the Dockerfile permissions change, README, and this progress record. The resulting SHA and verified remote outcome are reported in the handoff; no follow-up commit is created merely to record its own hash.
+- The user separately authorized S05 acquisition/provenance after this push, with no model training, S05 commit/push, or S06 work. S05 results still require human review and explicit approval.
 
 ### Entry template for approved steps
 
