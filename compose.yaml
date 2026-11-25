@@ -10,6 +10,10 @@ services:
       PYTHONPATH: /app/src
       # Verification artifacts belong only in scoped /tmp, not the mounted tests.
       PYTEST_ADDOPTS: -p no:cacheprovider
+      # Pin numerical-library concurrency as well as the explicit estimator n_jobs.
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
     volumes:
       # Selective, read-only development mounts; never expose the whole checkout.
       - type: bind
@@ -46,6 +50,13 @@ services:
         source: ./inputs/Concrete_Data.xls
         target: /app/inputs/Concrete_Data.xls
         read_only: true
+        bind:
+          create_host_path: false
+      # Durable experiment artifacts only; source, tests, and raw XLS stay read-only.
+      - type: bind
+        source: ./runs
+        target: /app/runs
+        read_only: false
         bind:
           create_host_path: false
       # Docker-managed storage reserved for a future SQLite checkpointer.

@@ -1,4 +1,4 @@
-"""Load the approved UCI snapshot; prepare data without fitting any model.
+"""Deterministic data preparation, explicit LR fitting, and reviewed test metrics.
 
 The checksum/schema are human-reviewed development fixtures, not extracted paper
 claims. Only load_concrete performs file I/O; the remaining functions are pure.
@@ -13,6 +13,7 @@ from numbers import Real
 from pathlib import Path
 
 import xlrd
+from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 
 CONCRETE_SHA256 = "710076c66b9ca3f8050e7942f3dcbdbe04013534daeb0077ffd3079a52d8e0c4"
@@ -146,3 +147,109 @@ def split_data(data: ConcreteData, *, seed: int) -> tuple[ConcreteData, Concrete
         ConcreteData(tuple(train_rows), tuple(train_ids)),
         ConcreteData(tuple(test_rows), tuple(test_ids)),
     )
+
+
+def fit_predict(
+    train: ConcreteData,
+    test: ConcreteData,
+    *,
+    fit_intercept: bool,
+    positive: bool,
+    copy_X: bool,
+    n_jobs: int,
+) -> tuple[float, ...]:
+    """Fit only training observations; all four constructor settings are required."""
+    if any(type(value) is not bool for value in (fit_intercept, positive, copy_X)):
+        raise ValueError("LR boolean settings must be explicit booleans")
+    if type(n_jobs) is not int or n_jobs < 1:
+        raise ValueError("LR n_jobs must be an explicit positive integer")
+    X_train, y_train = select_features_target(train)
+    X_test, _ = select_features_target(test)
+    if not X_train or not X_test or set(train.row_ids).intersection(test.row_ids):
+        raise ValueError("Training and test observations must be nonempty and disjoint")
+    model = LinearRegression(
+        fit_intercept=fit_intercept, positive=positive, copy_X=copy_X, n_jobs=n_jobs
+    )
+    model.fit(X_train, y_train)
+    predictions = tuple(float(value) for value in model.predict(X_test))
+    if len(predictions) != len(X_test) or not all(math.isfinite(x) for x in predictions):
+        raise ValueError("Predictions must be aligned finite numbers")
+    return predictions
+
+
+def evaluate_predictions(
+    targets: Sequence[float],
+    predictions: Sequence[float],
+    *,
+    mape_zero_policy: str,
+    nrmse_ddof: int,
+) -> dict:
+    """Reviewed test-only definitions; no paper claims or epsilon substitutions.
+
+    MAPE averages retained nonzero targets; nRMSE uses population test std.
+    Undefined metrics have null values and reasons, never NaN/Infinity or 0/1 fixes.
+    """
+    if mape_zero_policy != "exclude_zero_targets" or type(nrmse_ddof) is not int or nrmse_ddof != 0:
+        raise ValueError("Unsupported MAPE zero policy or nRMSE ddof")
+    if not targets or len(targets) != len(predictions):
+        raise ValueError("Metrics require nonempty aligned targets and predictions")
+    if any(
+        isinstance(x, bool) or not isinstance(x, Real) or not math.isfinite(x)
+        for x in (*targets, *predictions)
+    ):
+        raise ValueError("Metric inputs must be finite numbers")
+    n = len(targets)
+    try:
+        errors = tuple(y - pred for y, pred in zip(targets, predictions, strict=True))
+        # hypot avoids avoidable underflow from squaring near-zero errors.
+        error_norm = math.hypot(*errors)
+        rmse = error_norm / math.sqrt(n)
+        mae = math.fsum(abs(e) / n for e in errors)
+        mean = math.fsum(y / n for y in targets)
+        target_norm = math.hypot(*(y - mean for y in targets))
+        std = target_norm / math.sqrt(n)
+        r2 = 1 - (error_norm / target_norm) ** 2 if n >= 2 and target_norm > 0 else None
+        retained = tuple(
+            abs((y - p) / y) for y, p in zip(targets, predictions, strict=True) if y != 0
+        )
+        mape = 100 * math.fsum(x / len(retained) for x in retained) if retained else None
+        nrmse = 100 * (rmse / std) if std > 0 else None
+        if not all(
+            x is None or math.isfinite(x)
+            for x in (error_norm, target_norm, mean, std, rmse, mae, r2, mape, nrmse)
+        ):
+            raise ValueError("Nonfinite metric arithmetic")
+    except OverflowError as exc:
+        raise ValueError("Nonfinite metric arithmetic") from exc
+
+    def metric(value, unit, denominator, reason=None):
+        return dict(
+            value=value,
+            unit=unit,
+            status="COMPUTED" if value is not None else "NOT_COMPARABLE",
+            denominator=denominator,
+            reason=reason,
+        )
+
+    return {
+        "RMSE": metric(rmse, "MPa", {"count": n}),
+        "MAE": metric(mae, "MPa", {"count": n}),
+        "R2": metric(
+            r2,
+            "dimensionless",
+            {"count": n, "target_deviation_l2": target_norm},
+            "At least two nonconstant test targets are required" if r2 is None else None,
+        ),
+        "MAPE": metric(
+            mape,
+            "percent",
+            {"retained_count": len(retained), "excluded_zero_count": n - len(retained)},
+            "No nonzero test targets remain" if mape is None else None,
+        ),
+        "nRMSE": metric(
+            nrmse,
+            "percent",
+            {"test_std": std, "ddof": nrmse_ddof, "count": n},
+            "Test target standard deviation is zero" if nrmse is None else None,
+        ),
+    }

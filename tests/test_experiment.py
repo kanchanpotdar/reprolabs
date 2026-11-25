@@ -1,17 +1,20 @@
-"""Deterministic data contracts; synthetic expectations are independent of the code.
-
-Only the optional final test reads the approved local XLS. No test fits a model.
-"""
+"""Data/experiment contracts with independent synthetic expectations and scoped I/O."""
 
 import hashlib
+import json
+import math
+import multiprocessing
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from reprolab import experiment
+from reprolab import cli, experiment
 from reprolab.experiment import (
     ConcreteData,
+    evaluate_predictions,
+    fit_predict,
     load_concrete,
     remove_duplicates,
     select_features_target,
@@ -263,3 +266,396 @@ def test_approved_xls_integration():
     assert set(train.row_ids).isdisjoint(test.row_ids)
     assert set(train.row_ids) | set(test.row_ids) | set(duplicate_of) == set(range(2, 1032))
     assert path.read_bytes() == before
+
+
+@pytest.fixture
+def linear_data():
+    # Hand-defined y=2*x+1; seven zero predictors, no held-out observation in fit.
+    train = ConcreteData(
+        tuple((float(x),) + (0.0,) * 7 + (float(2 * x + 1),) for x in (0, 1, 2, 3)), (2, 3, 4, 5)
+    )
+    test = ConcreteData(((4.0,) + (0.0,) * 7 + (9.0,), (5.0,) + (0.0,) * 7 + (11.0,)), (6, 7))
+    return train, test
+
+
+def test_explicit_lr_has_known_predictions_and_preserves_inputs(linear_data):
+    train, test = linear_data
+    before = (train, test)
+    actual = fit_predict(train, test, fit_intercept=True, positive=False, copy_X=True, n_jobs=1)
+    assert actual == pytest.approx((9.0, 11.0), rel=1e-12, abs=1e-12)
+    assert (train, test) == before
+
+
+def test_lr_forwards_all_settings_and_fits_training_only(monkeypatch, linear_data):
+    train, test = linear_data
+    seen = {}
+
+    class Model:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+        def fit(self, X, y):
+            assert X == tuple(row[:8] for row in train.rows)
+            assert y == (1.0, 3.0, 5.0, 7.0)
+
+        def predict(self, X):
+            assert X == tuple(row[:8] for row in test.rows)
+            return (9.0, 11.0)
+
+    monkeypatch.setattr(experiment, "LinearRegression", Model)
+    fit_predict(train, test, fit_intercept=False, positive=True, copy_X=False, n_jobs=2)
+    assert seen == {"fit_intercept": False, "positive": True, "copy_X": False, "n_jobs": 2}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"positive": 0}, {"fit_intercept": "True"}, {"copy_X": 1}, {"n_jobs": 0}, {"n_jobs": True}],
+)
+def test_lr_rejects_invalid_settings(linear_data, change):
+    settings = dict(fit_intercept=True, positive=False, copy_X=True, n_jobs=1)
+    settings.update(change)
+    with pytest.raises(ValueError):
+        fit_predict(*linear_data, **settings)
+
+
+def test_lr_rejects_overlap_empty_data_and_nonfinite_predictions(monkeypatch, linear_data):
+    train, test = linear_data
+    settings = dict(fit_intercept=True, positive=False, copy_X=True, n_jobs=1)
+    for invalid in (ConcreteData((), ()), train):
+        with pytest.raises(ValueError):
+            fit_predict(train, invalid, **settings)
+
+    class BadModel:
+        def __init__(self, **kwargs):
+            pass
+
+        def fit(self, X, y):
+            pass
+
+        def predict(self, X):
+            return (float("nan"), 1.0)
+
+    monkeypatch.setattr(experiment, "LinearRegression", BadModel)
+    with pytest.raises(ValueError, match="Predictions"):
+        fit_predict(train, test, **settings)
+
+
+def measured(y, predictions, **changes):
+    settings = dict(mape_zero_policy="exclude_zero_targets", nrmse_ddof=0)
+    settings.update(changes)
+    return evaluate_predictions(y, predictions, **settings)
+
+
+def test_metrics_equal_hand_calculated_values():
+    result = measured((1.0, 2.0, 3.0), (1.0, 2.0, 4.0))
+    expected = {
+        "RMSE": math.sqrt(1 / 3),
+        "MAE": 1 / 3,
+        "R2": 0.5,
+        "MAPE": 100 / 9,
+        "nRMSE": 100 / math.sqrt(2),
+    }
+    for name, value in expected.items():
+        assert result[name]["value"] == pytest.approx(value, rel=1e-12, abs=1e-12)
+        assert result[name]["status"] == "COMPUTED"
+    assert result["MAPE"]["denominator"] == {"retained_count": 3, "excluded_zero_count": 0}
+    assert result["nRMSE"]["denominator"]["test_std"] == pytest.approx(math.sqrt(2 / 3))
+    assert result["nRMSE"]["denominator"]["ddof"] == 0
+
+
+def test_mape_uses_retained_count_without_epsilon_or_near_zero_exclusion():
+    result = measured((0.0, 2.0), (9.0, 1.0))
+    assert result["MAPE"]["value"] == 50.0
+    assert result["MAPE"]["denominator"] == {"retained_count": 1, "excluded_zero_count": 1}
+    near_zero = measured((1e-300, 2e-300), (0.0, 0.0))
+    assert near_zero["MAPE"]["value"] == 100.0
+    assert near_zero["RMSE"]["value"] > 0
+    assert near_zero["R2"]["status"] == "COMPUTED"
+
+
+@pytest.mark.parametrize(
+    "y,predictions,undefined",
+    [
+        ((0.0, 0.0), (1.0, 2.0), ("MAPE", "nRMSE", "R2")),
+        ((2.0, 2.0), (2.0, 2.0), ("nRMSE", "R2")),
+        ((2.0,), (1.0,), ("nRMSE", "R2")),
+    ],
+)
+def test_undefined_metrics_are_null_with_reasons(y, predictions, undefined):
+    result = measured(y, predictions)
+    for name in undefined:
+        assert result[name]["value"] is None and result[name]["reason"]
+        assert result[name]["status"] == "NOT_COMPARABLE"
+    json.dumps(result, allow_nan=False)
+
+
+def test_r2_retains_negative_values():
+    assert measured((1.0, 2.0, 3.0), (10.0, 10.0, 10.0))["R2"]["value"] < 0
+
+
+@pytest.mark.parametrize(
+    "y,predictions",
+    [
+        ((), ()),
+        ((1.0,), ()),
+        ((True,), (1.0,)),
+        ((1.0,), ("1",)),
+        ((float("nan"),), (1.0,)),
+        ((1.0,), (float("inf"),)),
+        ((1e308, -1e308), (-1e308, 1e308)),
+    ],
+)
+def test_metrics_reject_invalid_or_overflowing_numbers(y, predictions):
+    with pytest.raises(ValueError):
+        measured(y, predictions)
+
+
+@pytest.mark.parametrize(
+    "change", [{"nrmse_ddof": 1}, {"nrmse_ddof": True}, {"mape_zero_policy": "epsilon"}]
+)
+def test_metrics_reject_unsupported_definitions(change):
+    with pytest.raises(ValueError):
+        measured((1.0, 2.0), (1.0, 2.0), **change)
+
+
+@pytest.fixture
+def cli_case():
+    from reprolab.manifest import development_manifest, fingerprint
+
+    with tempfile.TemporaryDirectory(prefix="reprolab-s09-test-", dir="/tmp") as scratch:
+        root = Path(scratch)
+        outputs = root / "runs"
+        outputs.mkdir()
+        m = development_manifest(hashlib.sha256(Path("/app/uv.lock").read_bytes()).hexdigest())
+        argv = [
+            "--manifest",
+            "development",
+            "--expected-manifest-sha256",
+            fingerprint(m),
+            "--input",
+            "/app/inputs/missing.xls",
+            "--run-id",
+            "synthetic",
+            "--output-root",
+            str(outputs),
+        ]
+        yield root, outputs, argv, m
+    assert not Path(scratch).exists()
+
+
+def test_cli_loads_json_roundtrip_and_rejects_unapproved_or_invalid_manifest(cli_case):
+    from reprolab.manifest import canonical_json, fingerprint
+
+    root, _, _, m = cli_case
+    lock = Path("/app/uv.lock").read_bytes()
+    path = root / "manifest.json"
+    path.write_text(canonical_json(m))
+    assert fingerprint(cli._load_manifest(str(path), fingerprint(m), lock)) == fingerprint(m)
+    with pytest.raises(ValueError, match="fingerprint"):
+        cli._load_manifest(str(path), "0" * 64, lock)
+    with pytest.raises(ValueError, match="lockfile"):
+        cli._load_manifest(str(path), fingerprint(m), lock + b"\n")
+    data = json.loads(path.read_text())
+    del data["split"]
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError):
+        cli._load_manifest(str(path), fingerprint(m), lock)
+    data["split"] = json.loads(canonical_json(m))["split"]
+    data["model"]["name"] = "RandomForestRegressor"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError):
+        cli._load_manifest(str(path), fingerprint(m), lock)
+    path.write_text('{"schema_version":1,"schema_version":1}')
+    with pytest.raises(ValueError, match="Duplicate"):
+        cli._load_manifest(str(path), fingerprint(m), lock)
+
+
+def test_environment_rejects_actual_version_drift(monkeypatch, cli_case):
+    _, _, _, m = cli_case
+    monkeypatch.setattr(cli.platform, "python_version", lambda: "3.12.0")
+    with pytest.raises(ValueError, match="software"):
+        cli._environment(m, Path("/app/uv.lock").read_bytes())
+
+
+def test_claim_values_do_not_enter_measured_outputs(monkeypatch, cli_case, linear_data):
+    from reprolab.manifest import LockedManifest
+
+    root, _, argv, m = cli_case
+    train, test = linear_data
+    path = root / "synthetic.xls"
+    path.write_bytes(b"synthetic loader stub; not an XLS")
+    args = SimpleNamespace(
+        manifest="development",
+        expected_manifest_sha256="ignored by isolated stub",
+        input=str(path),
+        run_id="synthetic",
+        max_seconds=300,
+    )
+    monkeypatch.setattr(cli, "_environment", lambda *_: {})
+    monkeypatch.setattr(
+        cli,
+        "load_concrete",
+        lambda _: ConcreteData(train.rows + test.rows, train.row_ids + test.row_ids),
+    )
+    monkeypatch.setattr(cli, "remove_duplicates", lambda raw, **kw: (raw, {}))
+    monkeypatch.setattr(cli, "split_data", lambda raw, **kw: (train, test))
+    values = []
+    for fake_claim in (0.0, 999.0):
+        data = json.loads(m.model_dump_json())
+        for metric in data["metrics"]:
+            metric["published_claim"]["value"] = 0.123 if metric["name"] == "R2" else fake_claim
+        variant = LockedManifest.model_validate_json(json.dumps(data))
+        monkeypatch.setattr(cli, "_load_manifest", lambda *a: variant)
+        result = cli._execute(args)["results"]
+        values.append(result["metrics"])
+        assert (
+            result["execution_status"] == "COMPLETED"
+            and result["reproduction_status"] == "INCONCLUSIVE"
+        )
+        assert "published_claim" not in json.dumps(result)
+    assert values[0] == values[1]
+    assert values[0]["RMSE"]["value"] == pytest.approx(0, abs=1e-12)
+
+
+def test_cli_missing_input_and_checksum_failure_leave_no_results(cli_case, capsys):
+    root, outputs, argv, _ = cli_case
+    assert cli.main(argv) == 2
+    assert json.loads(capsys.readouterr().err)["execution_status"] == "BLOCKED"
+    assert not list(outputs.iterdir())
+    bad = root / "altered.xls"
+    bad.write_bytes(b"wrong checksum")
+    argv[argv.index("--input") + 1] = str(bad)
+    assert cli.main(argv) == 2
+    assert not list(outputs.iterdir())
+
+
+@pytest.mark.parametrize("run_id", ["../escape", ".", "..", "/tmp/escape", "a/b", "a b", "a" * 65])
+def test_cli_rejects_unsafe_run_ids(cli_case, run_id):
+    _, outputs, argv, _ = cli_case
+    argv[argv.index("--run-id") + 1] = run_id
+    assert cli.main(argv) == 2
+    assert not list(outputs.iterdir())
+
+
+def test_cli_refuses_existing_runs_and_symlink_paths(monkeypatch, cli_case):
+    root, outputs, argv, _ = cli_case
+
+    def unexpected(*args):
+        raise AssertionError("Existing run must fail before computation")
+
+    monkeypatch.setattr(cli, "_supervise", unexpected)
+    existing = outputs / "synthetic"
+    existing.mkdir()
+    sentinel = existing / "results.json"
+    sentinel.write_text("previous result stays byte-identical")
+    assert cli.main(argv) == 2
+    assert sentinel.read_text() == "previous result stays byte-identical"
+    link = root / "linked"
+    link.symlink_to(outputs, target_is_directory=True)
+    argv[argv.index("--output-root") + 1] = str(link)
+    assert cli.main(argv) == 2
+    for name in ("linked", "linked/synthetic/results.json"):
+        with pytest.raises(ValueError, match="Symlink"):
+            cli._safe_path(str(root / name))
+    with pytest.raises(ValueError, match="traversal"):
+        cli._safe_path(str(root / ".." / "anything"))
+
+
+@pytest.mark.parametrize("seconds", ["0", "-1", "nan", "inf", "301"])
+def test_cli_rejects_invalid_execution_limits(cli_case, seconds):
+    _, outputs, argv, _ = cli_case
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv + ["--max-seconds", seconds])
+    assert exc.value.code == 2
+    assert not list(outputs.iterdir())
+
+
+def test_actual_supervisor_timeout_kills_worker_and_cleans_reservation(cli_case, capsys):
+    _, outputs, argv, _ = cli_case
+    before = {p.pid for p in multiprocessing.active_children()}
+    assert cli.main(argv + ["--max-seconds", "0.001"]) == 124
+    assert json.loads(capsys.readouterr().err)["error_type"] == "TimeoutError"
+    assert not list(outputs.iterdir())
+    assert {p.pid for p in multiprocessing.active_children()} == before
+
+
+def test_unexpected_failure_and_partial_write_cleanup(monkeypatch, cli_case, capsys):
+    from reprolab.manifest import canonical_json
+
+    _, outputs, argv, m = cli_case
+
+    def fail(*args):
+        raise RuntimeError("sensitive diagnostic must not be logged")
+
+    monkeypatch.setattr(cli, "_supervise", fail)
+    assert cli.main(argv) == 1
+    assert "sensitive diagnostic" not in capsys.readouterr().err
+    assert not list(outputs.iterdir())
+    payload = {
+        "manifest": canonical_json(m),
+        "results": {"execution_status": "COMPLETED", "resources": {}},
+    }
+    monkeypatch.setattr(cli, "_supervise", lambda *a: {"ok": True, "payload": payload})
+    count = 0
+
+    def failed_sync(fd):
+        nonlocal count
+        count += 1
+        if count == 2:
+            raise OSError("injected failure after writing results")
+
+    monkeypatch.setattr(cli.os, "fsync", failed_sync)
+    assert cli.main(argv) == 2
+    assert not list(outputs.iterdir())
+
+
+def test_publisher_writes_only_manifest_and_results(monkeypatch, cli_case):
+    from reprolab.manifest import canonical_json
+
+    _, outputs, argv, m = cli_case
+    payload = {
+        "manifest": canonical_json(m),
+        "results": {"execution_status": "COMPLETED", "resources": {}},
+    }
+    monkeypatch.setattr(cli, "_supervise", lambda *a: {"ok": True, "payload": payload})
+    assert cli.main(argv) == 0
+    run = outputs / "synthetic"
+    assert {p.name for p in run.iterdir()} == {"manifest.json", "results.json"}
+    assert (run / "manifest.json").read_text() == canonical_json(m)
+    assert json.loads((run / "results.json").read_text())["execution_status"] == "COMPLETED"
+
+
+@pytest.mark.parametrize("bad_manifest", [False, True])
+def test_cli_invalid_manifest_or_fingerprint_never_publishes(cli_case, bad_manifest):
+    root, outputs, argv, _ = cli_case
+    if bad_manifest:
+        path = root / "invalid.json"
+        path.write_text('{"unsupported": true}')
+        argv[argv.index("--manifest") + 1] = str(path)
+    else:
+        argv[argv.index("--expected-manifest-sha256") + 1] = "0" * 64
+    assert cli.main(argv) == 2
+    assert not list(outputs.iterdir())
+
+
+def test_parent_publication_is_also_time_bounded(monkeypatch, cli_case):
+    import time
+
+    from reprolab.manifest import canonical_json
+
+    _, outputs, argv, m = cli_case
+    payload = {
+        "manifest": canonical_json(m),
+        "results": {"execution_status": "COMPLETED", "resources": {}},
+    }
+    monkeypatch.setattr(cli, "_supervise", lambda *a: {"ok": True, "payload": payload})
+    monkeypatch.setattr(cli.os, "fsync", lambda fd: time.sleep(2))
+    assert cli.main(argv + ["--max-seconds", "0.05"]) == 124
+    assert not list(outputs.iterdir())
+
+
+def test_environment_rejects_distribution_drift(monkeypatch, cli_case):
+    _, _, _, m = cli_case
+    monkeypatch.setattr(cli.importlib.metadata, "distributions", lambda: [])
+    with pytest.raises(ValueError, match="software"):
+        cli._environment(m, Path("/app/uv.lock").read_bytes())

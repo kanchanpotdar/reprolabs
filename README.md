@@ -4,7 +4,7 @@ An evidence-driven research reproducibility agent, planned to reconstruct an ML 
 
 ## Current state
 
-This repository contains paper evidence, verified UCI dataset provenance, a pinned Docker environment, data-preparation functions/tests, and a strict evidence-aware development manifest. There is no runnable CLI or model experiment yet.
+This repository contains paper evidence, verified UCI dataset provenance, a pinned Docker environment, strict manifests, and a deterministic Linear Regression CLI with data/model/metric regression tests. S09 produces measured JSON results; human review remains required.
 
 | Step | State | Evidence |
 |---|---|---|
@@ -17,12 +17,13 @@ This repository contains paper evidence, verified UCI dataset provenance, a pinn
 | S06 — Data loader, duplicate handling, and split | Human-approved, 2026-11-22, based on successful verification | [Data functions](src/reprolab/experiment.py); verification commands below |
 | S07 — Data and split regression tests | Human-approved, 2026-11-22, based on successful verification | [Pytest module](tests/test_experiment.py); S07 verification below |
 | S08 — Explicit locked manifest | Human-approved, 2026-11-23, based on successful verification | [Manifest schema and reviewed fixture](src/reprolab/manifest.py); S08 verification below |
+| S09 — Deterministic CLI execution | Human-approved, 2026-11-25, based on successful verification and repeatable results | [CLI](src/reprolab/cli.py); measured development runs and verification below |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
 ## First candidate
 
-The candidate is the [2025 concrete-strength paper by Olvera-Mayorga et al.](https://doi.org/10.3390/app152312383), using **Yeh / UCI Concrete Compressive Strength** and scikit-learn **LinearRegression**. Its Table 6 metrics and source references are recorded in [the S00 ground-truth document](docs/p01_ground_truth.md). They are published claims; no local reproduction result exists.
+The candidate is the [2025 concrete-strength paper by Olvera-Mayorga et al.](https://doi.org/10.3390/app152312383), using **Yeh / UCI Concrete Compressive Strength** and scikit-learn **LinearRegression**. Its Table 6 metrics and source references are recorded in [the S00 ground-truth document](docs/p01_ground_truth.md). These remain published claims; S09 measurements below are separate development results with an inconclusive reproduction status.
 
 Two material protocol uncertainties remain:
 
@@ -38,7 +39,7 @@ The candidate's conditional approval retains these uncertainties. A similar scor
 3. Read only the active step in [docs/roadmap.md](docs/roadmap.md).
 4. Review that step's files and observable checks before approving it.
 
-The planned first implementation is a fixed, human-approved manifest → data validation → local model run → metrics → comparison report. The manifest and data loading/preparation functions exist so far. Paper parsing and orchestration come later.
+The implemented flow is an explicit reviewed manifest → data validation/preparation → bounded local model run → metrics → JSON artifacts. Comparison reports, paper parsing, and orchestration remain future work. Historical sections below retain the verification counts observed at each step; the current full suite has 95 tests.
 
 The ground-truth document is a human reference. Future extraction code and its model/tool access must not read `docs/` or receive these answer keys during evaluation.
 
@@ -778,7 +779,143 @@ print(json.dumps({
 PY
 ```
 
-Expected: S08 assertions pass, all 47 existing pytest cases pass, Ruff/format/lock checks pass, and no stopped verification containers or new project scratch artifacts remain. The printed view is an excerpt; the fingerprint is displayed beside the payload, never included in its hash. No model is fitted and no reproduction metrics/results are produced. Review questions: Why can the executable seed be known while the published seed is null? Why must an extraction schema omit reviewed fixture defaults? Why does a fingerprint not count as human approval?
+Expected: S08 assertions pass, its 47 existing data tests remain included in the current 95-case suite, Ruff/format/lock checks pass, and no stopped verification containers or new project scratch artifacts remain. The printed view is an excerpt; the fingerprint is displayed beside the payload, never included in its hash. These S08 assertions perform no model fit. Review questions: Why can the executable seed be known while the published seed is null? Why must an extraction schema omit reviewed fixture defaults? Why does a fingerprint not count as human approval?
+
+## S09 deterministic CLI and measured development runs
+
+[cli.py](src/reprolab/cli.py) uses argparse and the existing immutable Pydantic profile. Required arguments select a reviewed manifest (the explicit name `development` or an absolute saved-JSON path), its expected canonical SHA-256, the absolute XLS path, and an unused run ID. The caller must review any new fingerprint; passing a fingerprint is a drift check, not automatic approval. The approved development fingerprint remains:
+
+```text
+7ebf5b0ec902bc5c9c112f96e0956568c47cfc22d719732dd85659079b8e4716
+```
+
+The CLI verifies manifest structure/provenance, fingerprint, actual lockfile bytes, Python/uv versions, every installed distribution against the locked Linux package set, and an offline `uv lock --check`. JSON manifests reject duplicate keys and are limited to 1 MiB. Existing data functions remain unchanged: checksum-before-parse, exact schema, full-row first-occurrence deduplication, original IDs, no scaling/rounding, and a shuffled unstratified 70/30 split with explicit seed **123**. Eight features and the strength target remain aligned. LinearRegression receives all four settings explicitly: `fit_intercept=True`, `positive=False`, `copy_X=True`, `n_jobs=1`; their human-selected provenance stays in the saved manifest. No tuning, seed search, author-notebook execution, network acquisition, or paid call occurs.
+
+The parent reserves a new run directory exclusively, supervises a spawned worker, and publishes files only after successful computation and finite JSON validation. A parent deadline also covers publication; a timed-out worker/process group is killed and reaped. `--max-seconds` (or `REPROLAB_MAX_SECONDS`) defaults to **300**, accepts a lower positive finite limit, and rejects values above 300. Timeout exits **124**; invalid inputs/configuration/access exit **2**; unexpected execution errors exit **1**; completion exits **0**. There are **zero automatic retries**. Caught failures remove only this invocation's incomplete files/reservation. Existing run IDs and files are never overwritten. Paths must be absolute, contain no `..`, and have no symlink components; inputs must be regular files. Run IDs use 1–64 ASCII letters/digits/underscores/hyphens and begin with a letter/digit.
+
+`compose.yaml` adds only one writable bind, `./runs` → `/app/runs`, with missing-path protection. Create that directory before Compose use. Source, tests, manifests/lock/README, and the approved XLS remain read-only; docs/Git remain unmounted; the existing SQLite checkpoint volume is preserved. OMP/OpenBLAS/MKL concurrency is set to one in Compose and enforced for the worker. No dependency, lockfile, Dockerfile, image pin, or packaging change is required. This was verified on Linux/arm64 with the existing non-root image.
+
+Metric functions consume actual targets/predictions, without any paper-claim argument or fallback:
+
+| Metric | Definition and explicit denominator behavior |
+|---|---|
+| RMSE (MPa) | `sqrt(mean(error²))`; stable L2 norm / square root of test count |
+| MAE (MPa) | Mean absolute test error |
+| R² | `1 − SSE/SST`; computed using equivalent L2-norm ratios; null/`NOT_COMPARABLE` for fewer than two or constant targets; negative values are retained |
+| MAPE (%) | `100*mean(abs(error/y))` over nonzero test targets; record retained and excluded counts; no epsilon or near-zero exclusion; null if all targets are zero |
+| nRMSE (%) | `100*RMSE/std(y_test, ddof=0)`; record the actual test standard deviation/count/ddof; null if the denominator is zero |
+
+S00 supports these definitions; MAPE's retained-term denominator and nRMSE's `ddof=0` are explicitly **author-code-derived**, not newly claimed paper settings. Unknown/unsupported execution formulas are rejected. Nonfinite inputs, predictions, or metric arithmetic fail explicitly rather than producing NaN/Infinity. Undefined metrics carry null values and reasons while other supported measurements remain available.
+
+Successful outputs are the ignored local files `runs/<run_id>/manifest.json` and `results.json`. The manifest is exact canonical JSON, whose file SHA equals the manifest fingerprint. Results contain actual measurements, denominator details and definition provenance, execution status, split counts/row-ID hash, dataset/manifest/lock hashes, explicit model parameters, package versions, platform/thread settings, actual source-file hashes, optional caller-supplied **base** Git revision, UTC timestamp, wall/CPU time and Linux worker peak RSS in KiB. The base revision alone does not identify uncommitted S09 code; the recorded source hashes do. Published claims remain in the manifest and never populate measured results. No data rows, model pickle, prediction dump, or report is created.
+
+For the retained `s09-a`/`s09-b` runs, `source.base_git_commit` is the S08 revision `a885656a3559bea614fe54051ebdfda3d6accbb4`; it is labelled caller-supplied and does not identify the uncommitted S09 implementation. The four runtime Python file hashes match the source being committed, with aggregate SHA-256 `a0606bbb74e873883535dbd7d4ab4f378d7526062e753c5c4cc6648bed4713ca`. This is not a whole-worktree snapshot or signed execution attestation; data and environment identities are separate. Historical results retain their original provenance unchanged.
+
+Two agent-executed runs on **2026-11-23**, `s09-a` and `s09-b`, used the same input/configuration. The second loaded the first's saved manifest. Both loaded 1,030 rows, removed 25 duplicates, and used **703 training / 302 testing** observations. Every metric had **zero absolute difference**, passing `rtol=1e-12`, `atol=1e-12`:
+
+| Actual metric | Both development runs |
+|---|---:|
+| RMSE (MPa) | 9.678767807275001 |
+| MAE (MPa) | 7.589085799684043 |
+| R² | 0.6182298804778745 |
+| MAPE (%) | 30.686085389150236 |
+| nRMSE (%) | 61.78754886885589 |
+
+The results are `COMPLETED` executions, classified `INDEPENDENT_REIMPLEMENTATION`, with reproduction status **`INCONCLUSIVE`**. The published holdout seed, final LR settings, and exact approved PDF identity remain unresolved. Numerical repeatability is not a reproduction verdict or a tolerance against the paper's rounded claims. Package locks/thread limits do not promise bitwise equality across different hardware or numerical libraries. This is a local trusted-code development runner, not a hostile-code sandbox or a crash-recoverable artifact store; abrupt machine/container loss during publication can require inspection of incomplete files. Caught failures and the enforced deadline clean their owned incomplete outputs.
+
+### Verify S09 now
+
+Start Docker Desktop first. The commands below are implemented and were verified; use the repository root. Bash blocks omit comment lines so they paste into default interactive zsh. Use unused run IDs each time; preserve previous runs for review.
+
+```bash
+docker info --format '{{.ServerVersion}}'
+mkdir -p runs
+docker compose run --rm app uv run pytest -q
+docker compose run --rm -T app uv run --offline ruff check --no-cache .
+docker compose run --rm -T app ruff format --check src tests
+docker compose run --rm -T app uv sync --locked --offline --no-cache --no-build
+docker compose run --rm -T app uv lock --check --offline
+docker compose run --rm -T app uv run --offline python -m reprolab.cli --help
+```
+
+Expected: **95 passed, 0 failed/skipped** when the approved XLS is present; five Python files already formatted; lint and lock checks pass. All 47 original tests remain; the 48 new tests cover known synthetic linear predictions/settings, independent hand-calculated metrics, zero/near-zero/constant/invalid numeric cases, manifest/version drift, claims independence, unsafe paths, existing IDs, missing/corrupt inputs, actual worker timeout, parent publication timeout, and partial-write/unexpected-error cleanup. Synthetic CLI I/O fixtures live in scoped `/tmp` and are removed. The full raw-XLS test still skips cleanly when unavailable; default Compose itself requires its approved XLS bind source.
+
+Run twice with a **300-second cap, zero paid calls, zero retries**. No rebuilding is needed for these source-only changes. The second invocation reads the first saved canonical manifest:
+
+```bash
+S09_SHA=7ebf5b0ec902bc5c9c112f96e0956568c47cfc22d719732dd85659079b8e4716
+docker compose run --rm -T -e REPROLAB_GIT_COMMIT="$(git rev-parse HEAD)" app uv run --offline python -m reprolab.cli --manifest development --expected-manifest-sha256 "$S09_SHA" --input /app/inputs/Concrete_Data.xls --run-id s09-manual-a --max-seconds 300
+docker compose run --rm -T -e REPROLAB_GIT_COMMIT="$(git rev-parse HEAD)" app uv run --offline python -m reprolab.cli --manifest /app/runs/s09-manual-a/manifest.json --expected-manifest-sha256 "$S09_SHA" --input /app/inputs/Concrete_Data.xls --run-id s09-manual-b --max-seconds 300
+```
+
+Compare identities, canonical manifest round-trips, measured values, and provenance without creating another artifact:
+
+```bash
+docker compose run --rm -T app python - <<'PY'
+import hashlib
+import json
+import math
+from pathlib import Path
+from reprolab.manifest import LockedManifest, canonical_json, fingerprint
+roots = [Path('/app/runs') / name for name in ('s09-manual-a', 's09-manual-b')]
+a, b = [json.loads((root/'results.json').read_text()) for root in roots]
+for key in ('manifest_sha256', 'dataset_sha256', 'split', 'model', 'environment', 'source'):
+    assert a[key] == b[key], key
+for root in roots:
+    raw = (root/'manifest.json').read_bytes()
+    manifest = LockedManifest.model_validate_json(raw)
+    assert canonical_json(manifest).encode() == raw
+    assert fingerprint(manifest) == hashlib.sha256(raw).hexdigest() == a['manifest_sha256']
+    assert manifest.research.holdout_seed.value is None
+    assert manifest.research.final_fit_intercept.value is None
+    assert manifest.research.final_positive.value is None
+for name, left in a['metrics'].items():
+    right = b['metrics'][name]
+    assert left['status'] == right['status'] == 'COMPUTED'
+    assert math.isclose(left['value'], right['value'], rel_tol=1e-12, abs_tol=1e-12), name
+    print(name, left['value'], 'absolute repeat difference:', abs(left['value']-right['value']))
+assert a['execution_status'] == b['execution_status'] == 'COMPLETED'
+assert a['reproduction_status'] == b['reproduction_status'] == 'INCONCLUSIVE'
+assert a['split']['train_rows'] == 703 and a['split']['test_rows'] == 302
+assert a['metrics']['MAPE']['denominator'] == {'retained_count': 302, 'excluded_zero_count': 0}
+print('Repeatability and manifest round-trip: PASS; paper-reproduction status remains inconclusive.')
+PY
+```
+
+Expected failure check: this uses an absent **input argument**, keeping the original XLS in place. The CLI must exit 2, remove its reservation, and leave no `results.json`. An existing failure-check run ID is also refused; use an unused ID to test the input error specifically.
+
+```bash
+docker compose run --rm -T app uv run --offline python -m reprolab.cli --manifest development --expected-manifest-sha256 "$S09_SHA" --input /app/inputs/missing.xls --run-id s09-manual-missing --max-seconds 300
+test "$?" -eq 2
+test ! -e runs/s09-manual-missing/results.json
+git diff --check
+git diff --cached --name-only
+docker compose ps -a
+```
+
+Verify non-root access, immutable mounts, preserved input bytes, and absence of cache/scratch files:
+
+```bash
+docker compose run --rm -T app python - <<'PY'
+import hashlib
+import os
+from pathlib import Path
+assert os.getuid() == os.getgid() == 10001
+for name in ('src/reprolab/cli.py', 'tests/test_experiment.py', 'uv.lock', 'inputs/Concrete_Data.xls'):
+    assert not os.access(Path('/app')/name, os.W_OK)
+assert os.access('/app/runs', os.W_OK) and os.access('/var/lib/reprolab', os.W_OK)
+assert not Path('/app/docs').exists() and not Path('/app/.git').exists()
+assert hashlib.sha256(Path('/app/inputs/Concrete_Data.xls').read_bytes()).hexdigest() == '710076c66b9ca3f8050e7942f3dcbdbe04013534daeb0077ffd3079a52d8e0c4'
+assert not list(Path('/tmp').glob('reprolab-s09-test-*'))
+assert not Path('/app/.pytest_cache').exists()
+assert not list(Path('/app/src').rglob('__pycache__'))
+assert not list(Path('/app/tests').rglob('__pycache__'))
+print('Non-root permissions, raw XLS identity, and scratch/cache audit: PASS')
+PY
+docker compose ps -a
+```
+
+Completed `s09-a`/`s09-b` artifacts are intentionally retained locally; generated outputs are ignored. The user approved S09 and separately authorized its six-file commit/push on 2026-11-25. The next comparison/report step remains planning-only until explicitly approved. Review questions: why can a completed repeatable run remain inconclusive? What does a null metric mean when its denominator is undefined? Which recorded identity captures uncommitted source changes?
 
 ## Repository contents
 
@@ -794,12 +931,14 @@ Expected: S08 assertions pass, all 47 existing pytest cases pass, Ruff/format/lo
 | `uv.lock` | Resolved package versions, sources, and artifact hashes for locked synchronization |
 | `Dockerfile` | Pinned Python/uv image, locked in-image environment, and non-root development runtime |
 | `.dockerignore` | Minimal build-context allowlist |
-| `compose.yaml` | One development service, selective live file mounts, and the checkpoint state volume |
+| `compose.yaml` | One development service, read-only source/input mounts, writable run outputs, and checkpoint storage |
 | `inputs/` (ignored, local only) | Unmodified UCI XLS and official README; not included in Git or the image |
 | `src/reprolab/__init__.py` | Minimal package marker |
-| `src/reprolab/experiment.py` | Verified XLS loading and pure validation, duplicate handling, selection, and split functions |
+| `src/reprolab/experiment.py` | Verified XLS loading, data preparation, explicit LR fit/predict, and test metric definitions |
 | `src/reprolab/manifest.py` | Strict immutable manifest, source evidence/uncertainties, reviewed development fixture, and content fingerprint |
-| `tests/test_experiment.py` | Synthetic data/split regressions and optional read-only XLS integration |
+| `src/reprolab/cli.py` | Bounded offline argparse runner, strict validation, and guarded artifact publication |
+| `tests/test_experiment.py` | Data/model/metric/CLI regressions and optional read-only XLS integration |
+| `runs/` (ignored, local only) | Successful canonical manifests and actual measured results; not included in Git or image |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.
 
