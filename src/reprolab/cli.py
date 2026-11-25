@@ -205,7 +205,7 @@ def _failure(exc):
         return {
             "execution_status": "BLOCKED",
             "error_type": "ValidationError",
-            "message": "Manifest validation failed",
+            "message": "Artifact validation failed",
         }
     if isinstance(exc, (ValueError, OSError)):
         # Expected validation messages are locally defined; never echo unknown exceptions.
@@ -261,17 +261,92 @@ def _supervise(args, deadline):
             process.close()
 
 
+def _report_existing(args, run):
+    """Audit existing artifacts/data without fitting; publish only a new report."""
+    from reprolab.report import render_markdown, validate_results
+
+    _safe_path(run, directory=True)
+    report_path = run / "report.md"
+    if report_path.exists() or report_path.is_symlink():
+        raise FileExistsError("Existing report cannot be overwritten")
+    if not re.fullmatch(r"[0-9a-f]{64}", args.expected_results_sha256):
+        raise ValueError("Expected results checksum must be a lowercase SHA-256")
+    lock = _safe_path("/app/uv.lock").read_bytes()
+    manifest = _load_manifest(str(run / "manifest.json"), args.expected_manifest_sha256, lock)
+    path = _safe_path(run / "results.json")
+    if path.stat().st_size > 1024 * 1024:
+        raise ValueError("Results exceed the 1 MiB limit")
+    raw_results = path.read_bytes()
+    results_sha = _digest(raw_results)
+    if results_sha != args.expected_results_sha256:
+        raise ValueError("Results file differs from its approved checksum")
+    saved = json.loads(raw_results, object_pairs_hook=_unique_fields)
+    # Re-create data identity/statistics only: no model fit, prediction, or experiment rerun.
+    data = load_concrete(_safe_path(args.input or "/app/inputs/Concrete_Data.xls"))
+    clean, _ = remove_duplicates(data, expected_rows=manifest.preprocessing.expected_rows)
+    train, test = split_data(clean, seed=manifest.split.seed.value)
+    split_sha = _digest(_json({"train": train.row_ids, "test": test.row_ids}).encode())
+    result = validate_results(manifest, saved, lock_bytes=lock, split_identity=split_sha)
+    if result.run_id != args.run_id:
+        raise ValueError("Result run ID differs from its directory")
+    _, targets = select_features_target(test)
+    mean = math.fsum(y / len(targets) for y in targets)
+    norm = math.hypot(*(y - mean for y in targets))
+    if result.metrics["MAPE"].denominator["excluded_zero_count"] != sum(
+        y == 0 for y in targets
+    ) or not math.isclose(
+        result.metrics["R2"].denominator["target_deviation_l2"], norm, rel_tol=1e-12, abs_tol=1e-12
+    ):
+        raise ValueError("Saved normalization statistics differ from verified held-out targets")
+    text = render_markdown(
+        manifest, result, lock_bytes=lock, split_identity=split_sha, results_sha256=results_sha
+    )
+    created = False
+    try:
+        with report_path.open("x", encoding="utf-8") as stream:
+            created = True
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        # Publication is complete; a closed stdout must not turn it into a failed run.
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    except BaseException:
+        if created:
+            report_path.unlink(missing_ok=True)
+        raise
+    try:
+        print(_json({"report": str(report_path), "scientific_verdict": "INCONCLUSIVE"}))
+    except BrokenPipeError:
+        pass
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", required=True, help="development or an absolute JSON path")
+    parser.add_argument("--manifest", help="development or an absolute JSON path; execution only")
     parser.add_argument("--expected-manifest-sha256", required=True)
-    parser.add_argument("--input", required=True)
+    parser.add_argument("--input", help="Required for execution; report defaults to approved XLS")
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="Audit an existing run and create only report.md; never fit",
+    )
+    parser.add_argument(
+        "--expected-results-sha256", help="Required trusted result-file digest for report mode"
+    )
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output-root", default="/app/runs")
     parser.add_argument(
         "--max-seconds", type=float, default=os.environ.get("REPROLAB_MAX_SECONDS", "300")
     )
     args = parser.parse_args(argv)
+    if args.report_only:
+        if args.manifest is not None or args.expected_results_sha256 is None:
+            parser.error(
+                "report-only loads its saved manifest and requires --expected-results-sha256"
+            )
+    elif args.manifest is None or args.input is None or args.expected_results_sha256 is not None:
+        parser.error("execution requires --manifest and --input; results checksum is report-only")
     if not math.isfinite(args.max_seconds) or not 0 < args.max_seconds <= 300:
         parser.error("max-seconds must be finite, positive, and at most 300")
     started = time.monotonic()
@@ -290,6 +365,10 @@ def main(argv=None):
             raise ValueError("run-id must be 1-64 ASCII letters/digits/underscores/hyphens")
         root = _safe_path(args.output_root, directory=True)
         run = root / args.run_id
+        if args.report_only:
+            signal.signal(signal.SIGALRM, expired)
+            signal.setitimer(signal.ITIMER_REAL, max(0.000001, deadline - time.monotonic()))
+            return _report_existing(args, run)
         run.mkdir()  # Exclusive reservation; never reuse or overwrite an existing run.
         owned = run
         if time.monotonic() >= deadline:

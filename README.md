@@ -4,7 +4,7 @@ An evidence-driven research reproducibility agent, planned to reconstruct an ML 
 
 ## Current state
 
-This repository contains paper evidence, verified UCI dataset provenance, a pinned Docker environment, strict manifests, and a deterministic Linear Regression CLI with data/model/metric regression tests. S09 produces measured JSON results; human review remains required.
+This repository contains paper evidence, verified UCI dataset provenance, a pinned Docker environment, strict manifests, a deterministic Linear Regression CLI, and honest Markdown comparison reports. Execution success, numerical display agreement, and scientific reproduction remain separate.
 
 | Step | State | Evidence |
 |---|---|---|
@@ -18,6 +18,7 @@ This repository contains paper evidence, verified UCI dataset provenance, a pinn
 | S07 — Data and split regression tests | Human-approved, 2026-11-22, based on successful verification | [Pytest module](tests/test_experiment.py); S07 verification below |
 | S08 — Explicit locked manifest | Human-approved, 2026-11-23, based on successful verification | [Manifest schema and reviewed fixture](src/reprolab/manifest.py); S08 verification below |
 | S09 — Deterministic CLI execution | Human-approved, 2026-11-25, based on successful verification and repeatable results | [CLI](src/reprolab/cli.py); measured development runs and verification below |
+| S10 — Comparison and honest Markdown report | Human-approved, 2026-11-25, following manual verification of 162 passing tests and the INCONCLUSIVE report | [Report module](src/reprolab/report.py); S10 comparison and verification below |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
@@ -39,7 +40,7 @@ The candidate's conditional approval retains these uncertainties. A similar scor
 3. Read only the active step in [docs/roadmap.md](docs/roadmap.md).
 4. Review that step's files and observable checks before approving it.
 
-The implemented flow is an explicit reviewed manifest → data validation/preparation → bounded local model run → metrics → JSON artifacts. Comparison reports, paper parsing, and orchestration remain future work. Historical sections below retain the verification counts observed at each step; the current full suite has 95 tests.
+The implemented flow is an explicit reviewed manifest → data validation/preparation → bounded local model run → metrics → immutable JSON evidence → deterministic comparison report. Paper parsing and orchestration remain future work. Historical sections below retain each step's observed verification counts; the current full suite has 162 tests.
 
 The ground-truth document is a human reference. Future extraction code and its model/tool access must not read `docs/` or receive these answer keys during evaluation.
 
@@ -779,7 +780,7 @@ print(json.dumps({
 PY
 ```
 
-Expected: S08 assertions pass, its 47 existing data tests remain included in the current 95-case suite, Ruff/format/lock checks pass, and no stopped verification containers or new project scratch artifacts remain. The printed view is an excerpt; the fingerprint is displayed beside the payload, never included in its hash. These S08 assertions perform no model fit. Review questions: Why can the executable seed be known while the published seed is null? Why must an extraction schema omit reviewed fixture defaults? Why does a fingerprint not count as human approval?
+Expected: S08 assertions pass, its 47 existing data tests remain included in the current 162-case suite, Ruff/format/lock checks pass, and no stopped verification containers or new project scratch artifacts remain. The printed view is an excerpt; the fingerprint is displayed beside the payload, never included in its hash. These S08 assertions perform no model fit. Review questions: Why can the executable seed be known while the published seed is null? Why must an extraction schema omit reviewed fixture defaults? Why does a fingerprint not count as human approval?
 
 ## S09 deterministic CLI and measured development runs
 
@@ -809,7 +810,7 @@ S00 supports these definitions; MAPE's retained-term denominator and nRMSE's `dd
 
 Successful outputs are the ignored local files `runs/<run_id>/manifest.json` and `results.json`. The manifest is exact canonical JSON, whose file SHA equals the manifest fingerprint. Results contain actual measurements, denominator details and definition provenance, execution status, split counts/row-ID hash, dataset/manifest/lock hashes, explicit model parameters, package versions, platform/thread settings, actual source-file hashes, optional caller-supplied **base** Git revision, UTC timestamp, wall/CPU time and Linux worker peak RSS in KiB. The base revision alone does not identify uncommitted S09 code; the recorded source hashes do. Published claims remain in the manifest and never populate measured results. No data rows, model pickle, prediction dump, or report is created.
 
-For the retained `s09-a`/`s09-b` runs, `source.base_git_commit` is the S08 revision `a885656a3559bea614fe54051ebdfda3d6accbb4`; it is labelled caller-supplied and does not identify the uncommitted S09 implementation. The four runtime Python file hashes match the source being committed, with aggregate SHA-256 `a0606bbb74e873883535dbd7d4ab4f378d7526062e753c5c4cc6648bed4713ca`. This is not a whole-worktree snapshot or signed execution attestation; data and environment identities are separate. Historical results retain their original provenance unchanged.
+For the retained `s09-a`/`s09-b` runs, `source.base_git_commit` is the S08 revision `a885656a3559bea614fe54051ebdfda3d6accbb4`; it is labelled caller-supplied and does not identify the then-uncommitted S09 implementation. At S09 closeout, the four recorded runtime file hashes were verified against committed snapshot `9c66566554183d1f310b4a96cd9f7ecd6d675bca`, with aggregate SHA-256 `a0606bbb74e873883535dbd7d4ab4f378d7526062e753c5c4cc6648bed4713ca`. Current reporting code can differ from that historical snapshot. This is not a whole-worktree snapshot or signed execution attestation; data and environment identities are separate. Historical results retain their original provenance unchanged.
 
 Two agent-executed runs on **2026-11-23**, `s09-a` and `s09-b`, used the same input/configuration. The second loaded the first's saved manifest. Both loaded 1,030 rows, removed 25 duplicates, and used **703 training / 302 testing** observations. Every metric had **zero absolute difference**, passing `rtol=1e-12`, `atol=1e-12`:
 
@@ -838,7 +839,7 @@ docker compose run --rm -T app uv lock --check --offline
 docker compose run --rm -T app uv run --offline python -m reprolab.cli --help
 ```
 
-Expected: **95 passed, 0 failed/skipped** when the approved XLS is present; five Python files already formatted; lint and lock checks pass. All 47 original tests remain; the 48 new tests cover known synthetic linear predictions/settings, independent hand-calculated metrics, zero/near-zero/constant/invalid numeric cases, manifest/version drift, claims independence, unsafe paths, existing IDs, missing/corrupt inputs, actual worker timeout, parent publication timeout, and partial-write/unexpected-error cleanup. Synthetic CLI I/O fixtures live in scoped `/tmp` and are removed. The full raw-XLS test still skips cleanly when unavailable; default Compose itself requires its approved XLS bind source.
+At S09 completion: **95 passed, 0 failed/skipped**, with five Python files formatted. The current S10 suite has **162 tests and six Python files**. All 47 original tests remain; the 48 S09 additions cover known synthetic linear predictions/settings, independent hand-calculated metrics, zero/near-zero/constant/invalid numeric cases, manifest/version drift, claims independence, unsafe paths, existing IDs, missing/corrupt inputs, actual worker timeout, parent publication timeout, and partial-write/unexpected-error cleanup. Synthetic CLI I/O fixtures live in scoped `/tmp` and are removed. The full raw-XLS test still skips cleanly when unavailable; default Compose itself requires its approved XLS bind source.
 
 Run twice with a **300-second cap, zero paid calls, zero retries**. No rebuilding is needed for these source-only changes. The second invocation reads the first saved canonical manifest:
 
@@ -917,6 +918,114 @@ docker compose ps -a
 
 Completed `s09-a`/`s09-b` artifacts are intentionally retained locally; generated outputs are ignored. The user approved S09 and separately authorized its six-file commit/push on 2026-11-25. The next comparison/report step remains planning-only until explicitly approved. Review questions: why can a completed repeatable run remain inconclusive? What does a null metric mean when its denominator is undefined? Which recorded identity captures uncommitted source changes?
 
+## S10 comparison and honest Markdown report
+
+[report.py](src/reprolab/report.py) has three public responsibilities: `validate_results` checks the saved S09-v1 result contract and its consistency with an approved manifest, lock, and independently audited split; `compare_run` separates artifact/protocol findings from arithmetic diagnostics; `render_markdown` creates deterministic text from saved evidence. These functions perform no file I/O, model fit, or source extraction. Small strict Pydantic records reject extra/missing fields, coercive strings/booleans, nonfinite measurements, inconsistent statuses, unsupported formulas/units, normalization mismatches, wrong dataset/split/model metadata, software drift, and invalid source provenance. Source digests describe historical runtime files; the newer reporting code is allowed to differ.
+
+`cli.py --report-only` reads an existing run's manifest/results, verifies the manifest fingerprint and **a separately supplied trusted results-file SHA-256**, validates lock and recorded package versions, and re-creates only data preparation/split identity and held-out target statistics from the verified read-only XLS. It performs no training, prediction, or experiment rerun. Dataset bytes, preprocessing counts, split IDs, test population/normalization, model parameters, definition evidence, saved UTC timestamp, source-map checksum, and execution limits are checked before writing. Duplicate JSON keys, unsafe/symlink paths, missing/inconsistent artifacts, existing report files, and incomplete writes fail cleanly. The only new artifact is `runs/<run_id>/report.md`; the original two JSON files are never rewritten. Existing report files are refused with exit 2. Report mode retains the at-most-300-second parent deadline and uses no paid calls, retries, dependencies, or new mounts.
+
+The extra `--expected-results-sha256` is deliberate: S09 did not retain predictions, so a reader cannot independently recompute every measured value without retraining. A checksum copied from trusted prior review detects otherwise plausible numeric edits; calculating a new checksum of a changed file does not approve that change. Hashes are integrity anchors, not signatures or proof of execution. This reporting layer validates the current fixed Concrete development profile; it cannot manufacture a complete historical paper protocol from missing fields.
+
+### Observed numerical comparison
+
+The generated local `runs/s09-a/report.md` uses the existing saved execution timestamp, **2026-11-23T14:30:23.666456+00:00**, and was verified on 2026-11-25. All original JSON evidence remains byte-identical. Comparisons use full decimal values with fixed rounding rules before deterministic formatting, `rtol=0`, and the following **human-selected display-precision** bounds. They are not paper-reported scientific acceptance thresholds:
+
+| Metric | Published | Observed | Absolute arithmetic difference | Relative difference (%) | Abs tolerance | Display check | Definition compatibility | Eligible agreement |
+|---|---:|---:|---:|---:|---:|---|---|---|
+| RMSE (MPa) | 9.68 | 9.678767807275001 | 0.001232192724999 | 0.0127292636880 | 0.005 MPa | WITHIN | MATCH | WITHIN |
+| MAE (MPa) | 7.59 | 7.589085799684043 | 0.000914200315957 | 0.0120447999467 | 0.005 MPa | WITHIN | MATCH | WITHIN |
+| R² | 0.618 | 0.6182298804778745 | 0.0002298804778745 | N/A | 0.0005 | WITHIN | MATCH | WITHIN |
+| MAPE (%) | 30.72 | 30.686085389150236 | 0.033914610849764 pp | 0.110399123860 | 0.005 pp | OUTSIDE | MATCH | OUTSIDE |
+| nRMSE (%) | 61.81 | 61.78754886885589 | 0.02245113114411 pp | 0.0363228136938 | 0.005 pp | OUTSIDE | UNKNOWN | NOT_COMPARABLE |
+
+`pp` means percentage points; relative difference is `100*absolute_difference/abs(published)` for positive error references. Zero references and R² use N/A for relative differences. Undefined measurements retain null values/reasons and receive `NOT_COMPARABLE`, never invented numbers. Tolerance boundaries are inclusive and based on the full values, not rounded table text.
+
+RMSE, MAE, and R² fall inside the display bounds; MAPE and nRMSE fall outside arithmetically. MAPE uses the reviewed mean formula, and all **302** test targets are nonzero, so the code-derived zero mask leaves its denominator unchanged. With excluded zeros, the paper's retained denominator would be uncertain and its eligible comparison would be `NOT_COMPARABLE`. nRMSE uses the actual test std **15.66459259909823 MPa** and code-derived `ddof=0`; the published ddof remains unknown. Its arithmetic OUTSIDE label therefore does not become an eligible disagreement verdict.
+
+### Scientific conclusion and provenance
+
+The report distinguishes `MATCH`, `MISMATCH`, and `UNKNOWN` findings. Recorded dataset/preprocessing/split/model/environment information matches the approved development configuration. Published holdout seed/membership, final LR settings, exact PDF identity, and historical environment equivalence remain unresolved. Global/CV seed 42 never substitutes for the missing holdout seed, and the execution seed 123/four human-selected LR parameters never fill research nulls. Even identical scores cannot establish historical protocol equivalence. The S09 runs retain **COMPLETED execution / INDEPENDENT_REIMPLEMENTATION / INCONCLUSIVE reproduction**, and the report's scientific verdict is **INCONCLUSIVE**.
+
+Report provenance includes dataset, canonical manifest, pinned result file, lock, ordered split-ID and source-map hashes, recorded package/platform/thread versions, evidence locations, and saved timestamps. It correctly labels the recorded S08 Git SHA as a caller-supplied base revision and preserves the four historical runtime-file hashes. Source-map self-consistency does not authenticate execution; no whole-worktree snapshot, signed attestation, or verified PDF hash is invented. Current schema/evidence does not establish a fully matched reproduction. No `docs/` answer key is read by runtime reporting.
+
+The initial `s09-a/report.md` is **10,976 bytes**, SHA-256 `8b0c308e30ddded3c1f27806e5f7fdc908899a9e6fbaca6844e6a0f010f23c86`. It is intentionally ignored/local. The only saved S09 evidence checksums remain:
+
+| Artifact | SHA-256 |
+|---|---|
+| Both saved manifests | `7ebf5b0ec902bc5c9c112f96e0956568c47cfc22d719732dd85659079b8e4716` |
+| `s09-a/results.json` | `6756cb82b19c8791ba1584ca418e31e5cec23b4fd5af4bc751470809e1503b08` |
+| `s09-b/results.json` | `5732c6cf51e0830b72ea2ed0796683c20db3dd87784479470ec020e67635921a` |
+
+### Verify S10 now
+
+Start Docker Desktop and work from this repository root. The report command is implemented. Tests and validation run inside Docker; no rebuild or host package installation is required:
+
+```bash
+docker info --format '{{.ServerVersion}}'
+docker compose run --rm app uv run pytest -q
+docker compose run --rm -T app uv run --offline pytest -q -k report
+docker compose run --rm -T app uv run --offline ruff check --no-cache .
+docker compose run --rm -T app ruff format --check src tests
+docker compose run --rm -T app uv sync --locked --offline --no-cache --no-build
+docker compose run --rm -T app uv lock --check --offline
+cat runs/s09-a/report.md
+```
+
+Expected: **162 passed, zero failed/skipped**, including all 95 existing cases and 67 report cases; six files already formatted; lint/lock checks pass. Focused tests cover exact-score UNKNOWN/MISMATCH controls, wrong dataset/split/model rejection, missing/tampered/duplicate/nonfinite artifacts, all five tolerance boundaries, pp versus relative percentages, zero/undefined denominators, fixed decimal context, deterministic safe Markdown, no-fit report mode, JSON preservation, and overwrite/partial-write/deadline failure handling. Fixtures use scoped container `/tmp` with synthetic evidence and a reader stub; no new real-data experiment is run by report tests.
+
+The report for `s09-a` already exists. This preservation check deliberately attempts an overwrite and expects exit 2; it must leave both JSON files and the report unchanged:
+
+```bash
+S10_MANIFEST_SHA=7ebf5b0ec902bc5c9c112f96e0956568c47cfc22d719732dd85659079b8e4716
+S10_A_RESULTS_SHA=6756cb82b19c8791ba1584ca418e31e5cec23b4fd5af4bc751470809e1503b08
+S10_BEFORE="$(shasum -a 256 runs/s09-a/manifest.json runs/s09-a/results.json runs/s09-a/report.md)"
+docker compose run --rm -T app uv run --offline python -m reprolab.cli --report-only --run-id s09-a --expected-manifest-sha256 "$S10_MANIFEST_SHA" --expected-results-sha256 "$S10_A_RESULTS_SHA"
+test "$?" -eq 2
+test "$S10_BEFORE" = "$(shasum -a 256 runs/s09-a/manifest.json runs/s09-a/results.json runs/s09-a/report.md)"
+```
+
+Optional manual creation for the unused `s09-b/report.md` path uses its own trusted result checksum. This invocation audits data/saved artifacts and creates only that report; it never fits a model. It was not executed by the agent, which generated only the requested `s09-a` report. Once a report exists, the same command is refused:
+
+```bash
+docker compose run --rm -T app uv run --offline python -m reprolab.cli --report-only --run-id s09-b --expected-manifest-sha256 7ebf5b0ec902bc5c9c112f96e0956568c47cfc22d719732dd85659079b8e4716 --expected-results-sha256 5732c6cf51e0830b72ea2ed0796683c20db3dd87784479470ec020e67635921a --max-seconds 300
+```
+
+Independently render twice in memory and verify exact equality with the saved report, while checking original bytes against approved hashes:
+
+```bash
+docker compose run --rm -T app python - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+from reprolab.experiment import load_concrete, remove_duplicates, split_data
+from reprolab.manifest import LockedManifest
+from reprolab.report import render_markdown
+root = Path('/app/runs/s09-a')
+manifest_bytes = (root/'manifest.json').read_bytes()
+results_bytes = (root/'results.json').read_bytes()
+assert hashlib.sha256(manifest_bytes).hexdigest() == '7ebf5b0ec902bc5c9c112f96e0956568c47cfc22d719732dd85659079b8e4716'
+result_sha = hashlib.sha256(results_bytes).hexdigest()
+assert result_sha == '6756cb82b19c8791ba1584ca418e31e5cec23b4fd5af4bc751470809e1503b08'
+m = LockedManifest.model_validate_json(manifest_bytes)
+r = json.loads(results_bytes)
+clean, _ = remove_duplicates(load_concrete('/app/inputs/Concrete_Data.xls'))
+train, test = split_data(clean, seed=m.split.seed.value)
+split_sha = hashlib.sha256(json.dumps({'train':train.row_ids,'test':test.row_ids}, sort_keys=True, separators=(',',':')).encode()).hexdigest()
+context = dict(lock_bytes=Path('/app/uv.lock').read_bytes(), split_identity=split_sha, results_sha256=result_sha)
+first = render_markdown(m, r, **context)
+assert first == render_markdown(m, r, **context) == (root/'report.md').read_text()
+assert (root/'manifest.json').read_bytes() == manifest_bytes
+assert (root/'results.json').read_bytes() == results_bytes
+print('Deterministic report SHA-256:', hashlib.sha256(first.encode()).hexdigest())
+print('Scientific verdict remains INCONCLUSIVE; original evidence unchanged.')
+PY
+git diff --check
+git diff --cached --name-only
+docker compose ps -a
+```
+
+The reporter detects structural/configuration inconsistencies and pinned-file changes. It cannot independently authenticate a caller-provided checksum, reconstruct discarded predictions, or recover from arbitrary machine loss during a write; a caught write error removes only its newly created incomplete report. The scientific limitations remain visible. The user approved S10 following manual verification and separately authorized its five-file commit/push on 2026-11-25. S11 remains planning-only until explicitly approved. Review questions: why does nRMSE have an OUTSIDE arithmetic check but NOT_COMPARABLE eligible status? Why do three WITHIN values leave the scientific verdict inconclusive?
+
 ## Repository contents
 
 | Path | Purpose |
@@ -937,8 +1046,9 @@ Completed `s09-a`/`s09-b` artifacts are intentionally retained locally; generate
 | `src/reprolab/experiment.py` | Verified XLS loading, data preparation, explicit LR fit/predict, and test metric definitions |
 | `src/reprolab/manifest.py` | Strict immutable manifest, source evidence/uncertainties, reviewed development fixture, and content fingerprint |
 | `src/reprolab/cli.py` | Bounded offline argparse runner, strict validation, and guarded artifact publication |
+| `src/reprolab/report.py` | Strict result validation, compatibility gates, display-precision comparisons, and deterministic Markdown |
 | `tests/test_experiment.py` | Data/model/metric/CLI regressions and optional read-only XLS integration |
-| `runs/` (ignored, local only) | Successful canonical manifests and actual measured results; not included in Git or image |
+| `runs/` (ignored, local only) | Canonical manifests, actual measured results, and generated reports; not included in Git or image |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.
 

@@ -1,10 +1,13 @@
 """Data/experiment contracts with independent synthetic expectations and scoped I/O."""
 
+import copy
 import hashlib
 import json
 import math
 import multiprocessing
 import tempfile
+import tomllib
+from decimal import Decimal, localcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -659,3 +662,494 @@ def test_environment_rejects_distribution_drift(monkeypatch, cli_case):
     monkeypatch.setattr(cli.importlib.metadata, "distributions", lambda: [])
     with pytest.raises(ValueError, match="software"):
         cli._environment(m, Path("/app/uv.lock").read_bytes())
+
+
+@pytest.fixture
+def report_case():
+    """Independent synthetic measurements; no persisted experiment or dataset needed."""
+    from reprolab.manifest import development_manifest, fingerprint
+
+    lock = Path("/app/uv.lock").read_bytes()
+    m = development_manifest(hashlib.sha256(lock).hexdigest())
+    protocols = {p.name: p for p in m.metrics}
+    values = {"RMSE": 1.0, "MAE": 0.5, "R2": 0.75, "MAPE": 20.0, "nRMSE": 50.0}
+    denominators = {
+        "RMSE": {"count": 302},
+        "MAE": {"count": 302},
+        "R2": {"count": 302, "target_deviation_l2": 2 * math.sqrt(302)},
+        "MAPE": {"retained_count": 302, "excluded_zero_count": 0},
+        "nRMSE": {"count": 302, "test_std": 2.0, "ddof": 0},
+    }
+    measurements = {
+        name: {
+            "value": value,
+            "unit": "dimensionless"
+            if name == "R2"
+            else "percent"
+            if name in ("MAPE", "nRMSE")
+            else "MPa",
+            "status": "COMPUTED",
+            "reason": None,
+            "denominator": denominators[name],
+            "definition": protocols[name].definition.model_dump(mode="json"),
+        }
+        for name, value in values.items()
+    }
+    measurements["MAPE"]["zero_policy_provenance"] = protocols[
+        "MAPE"
+    ].zero_target_policy.model_dump(mode="json")
+    measurements["nRMSE"]["ddof_provenance"] = protocols["nRMSE"].ddof.model_dump(mode="json")
+    source = {name: "0" * 64 for name in ("__init__.py", "cli.py", "experiment.py", "manifest.py")}
+    source_sha = hashlib.sha256(
+        json.dumps(source, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    r = {
+        "results_schema_version": 1,
+        "run_id": "synthetic",
+        "execution_status": "COMPLETED",
+        "experiment_classification": "INDEPENDENT_REIMPLEMENTATION",
+        "reproduction_status": "INCONCLUSIVE",
+        "protocol_limitations": ["Synthetic unit-test evidence; no real execution claim"],
+        "manifest_sha256": fingerprint(m),
+        "dataset_sha256": m.dataset.sha256.value,
+        "split": {
+            "seed": 123,
+            "raw_rows": 1030,
+            "cleaned_rows": 1005,
+            "duplicates_removed": 25,
+            "train_rows": 703,
+            "test_rows": 302,
+            "row_ids_sha256": "a" * 64,
+        },
+        "model": {
+            "name": "sklearn.linear_model.LinearRegression",
+            "parameters": {"fit_intercept": True, "positive": False, "copy_X": True, "n_jobs": 1},
+        },
+        "metrics": measurements,
+        "environment": {
+            "python": "3.12.16",
+            "uv": "0.13.8",
+            "packages": {
+                p["name"]: p["version"]
+                for p in tomllib.loads(lock.decode())["package"]
+                if p["name"] not in ("reprolab", "colorama")
+            },
+            "system": "Linux",
+            "machine": "test-architecture",
+            "threads": {
+                "OMP_NUM_THREADS": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+            },
+            "uv_lock_sha256": m.environment.uv_lock_sha256,
+        },
+        "source": {
+            "base_git_commit": None,
+            "git_revision_origin": "unavailable",
+            "files_sha256": source,
+            "sha256": source_sha,
+        },
+        "resources": {
+            "execution_limit_seconds": 300.0,
+            "automatic_retries": 0,
+            "paid_calls": 0,
+            "worker_cpu_seconds": 1.0,
+            "worker_peak_rss_kib": 1000,
+            "wall_seconds": 1.1,
+        },
+        "created_at_utc": "2026-01-01T00:00:00+00:00",
+    }
+    return m, r, dict(lock_bytes=lock, split_identity="a" * 64)
+
+
+def _report_rebind(manifest, results, data):
+    from reprolab.manifest import LockedManifest, fingerprint
+
+    changed = LockedManifest.model_validate_json(json.dumps(data))
+    results["manifest_sha256"] = fingerprint(changed)
+    return changed
+
+
+def test_report_identical_numbers_leave_unknown_protocol_inconclusive(report_case):
+    from reprolab.report import compare_run
+
+    m, r, context = report_case
+    data = json.loads(m.model_dump_json())
+    for p in data["metrics"]:
+        p["published_claim"]["value"] = r["metrics"][p["name"]]["value"]
+    m = _report_rebind(m, r, data)
+    comparison = compare_run(m, r, **context)
+    assert comparison["scientific_verdict"] == "INCONCLUSIVE"
+    assert all(row["display_check"] == "WITHIN" for row in comparison["metrics"])
+    findings = {f["item"]: f for f in comparison["findings"]}
+    assert findings["Published holdout seed"]["status"] == "UNKNOWN"
+    assert findings["Published LR positive"]["status"] == "UNKNOWN"
+    assert comparison["metrics"][-1]["agreement"] == "NOT_COMPARABLE"
+
+
+@pytest.mark.parametrize("field,actual", [("holdout_seed", 7), ("final_positive", True)])
+def test_report_known_conflicting_paper_settings_are_mismatch(report_case, field, actual):
+    from reprolab.report import compare_run
+
+    m, r, context = report_case
+    data = json.loads(m.model_dump_json())
+    for metric in data["metrics"]:
+        metric["published_claim"]["value"] = r["metrics"][metric["name"]]["value"]
+    evidence = data["paper"]["evidence"]
+    data["research"][field] = {
+        "value": actual,
+        "origin": "paper_reported",
+        "status": "reported",
+        "evidence": evidence,
+        "explanation": None,
+    }
+    m = _report_rebind(m, r, data)
+    comparison = compare_run(m, r, **context)
+    assert comparison["scientific_verdict"] == "INCONCLUSIVE"
+    assert any(f["status"] == "MISMATCH" for f in comparison["findings"])
+    assert all(row["display_check"] == "WITHIN" for row in comparison["metrics"])
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        ("dataset_sha256", "0" * 64),
+        ("manifest_sha256", "0" * 64),
+        ("split.seed", 7),
+        ("split.row_ids_sha256", "b" * 64),
+        ("split.cleaned_rows", 1030),
+        ("model.parameters.positive", True),
+        ("model.name", "RandomForestRegressor"),
+        ("metrics.RMSE.value", float("nan")),
+        ("metrics.MAE.value", float("inf")),
+        ("metrics.MAPE.value", "20"),
+        ("metrics.RMSE.value", None),
+        ("metrics.MAE.value", 2.0),
+        ("metrics.R2.value", 0.5),
+        ("metrics.nRMSE.value", 40.0),
+        ("metrics.RMSE.unit", "percent"),
+        ("metrics.RMSE.definition.value", "unreviewed formula"),
+        ("metrics.RMSE.population", "train"),
+        ("metrics.MAPE.denominator.retained_count", 301),
+        ("metrics.nRMSE.denominator.ddof", 1),
+        ("metrics.R2.denominator.count", True),
+        ("metrics.nRMSE.denominator.test_std", 1.0),
+        ("metrics.nRMSE.ddof_provenance", None),
+        ("environment.python", "3.12.0"),
+        ("environment.packages.numpy", "0.0"),
+        ("environment.uv_lock_sha256", "0" * 64),
+        ("environment.threads.OMP_NUM_THREADS", "2"),
+        ("source.sha256", "0" * 64),
+        ("source.files_sha256.cli.py", "f" * 64),
+        ("source.git_revision_origin", "caller_supplied"),
+        ("execution_status", "FAILED"),
+        ("reproduction_status", "REPRODUCED"),
+        ("created_at_utc", "2026-01-01T00:00:00"),
+        ("resources.paid_calls", 1),
+        ("results_schema_version", True),
+        ("unexpected", "field"),
+    ],
+)
+def test_report_rejects_invalid_or_tampered_artifacts(report_case, path, value):
+    from reprolab.report import validate_results
+
+    m, r, context = report_case
+    if path == "source.files_sha256.cli.py":
+        r["source"]["files_sha256"]["cli.py"] = value
+    else:
+        parent = r
+        keys = path.split(".")
+        for key in keys[:-1]:
+            parent = parent[key]
+        parent[keys[-1]] = value
+    with pytest.raises((ValueError, TypeError)):
+        validate_results(m, r, **context)
+
+
+@pytest.mark.parametrize(
+    "missing", ["metrics", "split", "source", "environment", "resources", "created_at_utc"]
+)
+def test_report_rejects_incomplete_artifacts(report_case, missing):
+    from reprolab.report import validate_results
+
+    m, r, context = report_case
+    del r[missing]
+    with pytest.raises(ValueError):
+        validate_results(m, r, **context)
+
+
+def test_report_tolerance_boundaries_and_percentage_points(report_case):
+    from reprolab.report import compare_run
+
+    m, r, context = report_case
+    for published, expected in [(20.005, "WITHIN"), (20.005000001, "OUTSIDE")]:
+        data = json.loads(m.model_dump_json())
+        next(p for p in data["metrics"] if p["name"] == "MAPE")["published_claim"]["value"] = (
+            published
+        )
+        current = _report_rebind(m, r, data)
+        row = next(p for p in compare_run(current, r, **context)["metrics"] if p["name"] == "MAPE")
+        assert row["display_check"] == expected
+        if expected == "WITHIN":
+            assert row["absolute_difference"] == Decimal("0.005")
+            assert row["relative_difference_percent"] != Decimal("0.005")
+    data = json.loads(m.model_dump_json())
+    next(p for p in data["metrics"] if p["name"] == "MAPE")["published_claim"]["value"] = 0.0
+    current = _report_rebind(m, r, data)
+    row = next(p for p in compare_run(current, r, **context)["metrics"] if p["name"] == "MAPE")
+    assert row["relative_difference_percent"] is None
+
+
+def test_report_incompatible_denominator_cannot_receive_agreement(report_case):
+    from reprolab.report import compare_run
+
+    m, r, context = report_case
+    r["metrics"]["MAPE"]["denominator"] = {"retained_count": 301, "excluded_zero_count": 1}
+    row = next(p for p in compare_run(m, r, **context)["metrics"] if p["name"] == "MAPE")
+    assert row["compatibility"] == "UNKNOWN" and row["agreement"] == "NOT_COMPARABLE"
+    data = json.loads(m.model_dump_json())
+    data["research"]["nrmse_ddof"] = {
+        "value": 1,
+        "origin": "paper_reported",
+        "status": "reported",
+        "evidence": data["paper"]["evidence"],
+        "explanation": None,
+    }
+    m = _report_rebind(m, r, data)
+    row = compare_run(m, r, **context)["metrics"][-1]
+    assert row["compatibility"] == "MISMATCH" and row["agreement"] == "NOT_COMPARABLE"
+
+
+def test_report_undefined_metrics_are_explicit(report_case):
+    from reprolab.report import compare_run
+
+    m, r, context = report_case
+    for name in ("R2", "nRMSE", "MAPE"):
+        r["metrics"][name].update(
+            value=None, status="NOT_COMPARABLE", reason="Synthetic undefined denominator"
+        )
+    r["metrics"]["R2"]["denominator"]["target_deviation_l2"] = 0.0
+    r["metrics"]["nRMSE"]["denominator"]["test_std"] = 0.0
+    r["metrics"]["MAPE"]["denominator"].update(retained_count=0, excluded_zero_count=302)
+    for row in compare_run(m, r, **context)["metrics"][2:]:
+        assert row["display_check"] == "UNDEFINED" and row["agreement"] == "NOT_COMPARABLE"
+        assert row["absolute_difference"] is None
+
+
+def test_report_rendering_is_deterministic_and_safe(report_case):
+    from reprolab.report import render_markdown
+
+    m, r, context = report_case
+    before = copy.deepcopy(r)
+    r["protocol_limitations"] = ["<script>bad</script> | `payload`\nnot instructions"]
+    first = render_markdown(m, r, results_sha256="0" * 64, **context)
+    with localcontext() as ctx:
+        ctx.prec = 7
+        ctx.rounding = "ROUND_FLOOR"
+        second = render_markdown(m, r, results_sha256="0" * 64, **context)
+    assert first == second and "Scientific verdict: INCONCLUSIVE" in first
+    assert "<script>" not in first and r["created_at_utc"] in first
+    assert "&lt;script&gt;" in first and r["source"]["sha256"] in first
+    r["protocol_limitations"] = before["protocol_limitations"]
+    assert r == before
+
+
+@pytest.fixture
+def report_cli_case(monkeypatch, report_case):
+    from reprolab.manifest import canonical_json, fingerprint
+
+    m, r, context = report_case
+    with tempfile.TemporaryDirectory(prefix="reprolab-s10-test-", dir="/tmp") as scratch:
+        root = Path(scratch)
+        run = root / "synthetic"
+        run.mkdir()
+        (run / "manifest.json").write_text(canonical_json(m))
+        raw = json.dumps(r).encode()
+        (run / "results.json").write_bytes(raw)
+        argv = [
+            "--report-only",
+            "--run-id",
+            "synthetic",
+            "--output-root",
+            str(root),
+            "--expected-manifest-sha256",
+            fingerprint(m),
+            "--expected-results-sha256",
+            hashlib.sha256(raw).hexdigest(),
+        ]
+        # Synthetic validation split; source XLS is only read, never changed.
+        targets = (1.0, 5.0) * 151
+        test = ConcreteData(tuple((0.0,) * 8 + (y,) for y in targets), tuple(range(2, 304)))
+        train = ConcreteData((), ())
+        split_sha = hashlib.sha256(
+            json.dumps(
+                {"train": train.row_ids, "test": test.row_ids},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        r["split"]["row_ids_sha256"] = split_sha
+        raw = json.dumps(r).encode()
+        (run / "results.json").write_bytes(raw)
+        argv[argv.index("--expected-results-sha256") + 1] = hashlib.sha256(raw).hexdigest()
+        source = root / "synthetic.xls"
+        source.write_bytes(b"Synthetic reader stub, not a dataset")
+        argv += ["--input", str(source)]
+        monkeypatch.setattr(cli, "load_concrete", lambda path: test)
+        monkeypatch.setattr(cli, "remove_duplicates", lambda data, **kw: (data, {}))
+        monkeypatch.setattr(cli, "split_data", lambda *a, **kw: (train, test))
+
+        def forbidden(*a, **kw):
+            raise AssertionError("Reporting must never fit or supervise a model")
+
+        monkeypatch.setattr(cli, "fit_predict", forbidden)
+        monkeypatch.setattr(cli, "_supervise", forbidden)
+        yield run, argv
+    assert not Path(scratch).exists()
+
+
+def test_report_cli_preserves_json_and_refuses_overwrite(report_cli_case):
+    run, argv = report_cli_case
+    before = {name: (run / name).read_bytes() for name in ("manifest.json", "results.json")}
+    assert cli.main(argv) == 0
+    report = (run / "report.md").read_bytes()
+    assert b"INCONCLUSIVE" in report
+    assert cli.main(argv) == 2
+    assert (run / "report.md").read_bytes() == report
+    assert all((run / name).read_bytes() == raw for name, raw in before.items())
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing", "tamper", "duplicate", "unsafe", "symlink", "write"]
+)
+def test_report_cli_failure_never_publishes_or_changes_evidence(
+    monkeypatch, report_cli_case, failure
+):
+    run, argv = report_cli_case
+    if failure == "missing":
+        (run / "results.json").unlink()
+    if failure == "tamper":
+        data = json.loads((run / "results.json").read_text())
+        data["metrics"]["MAPE"]["value"] = 20.0001
+        (run / "results.json").write_text(json.dumps(data))
+    if failure == "duplicate":
+        raw = b'{"run_id":"synthetic",' + (run / "results.json").read_bytes()[1:]
+        (run / "results.json").write_bytes(raw)
+        argv[argv.index("--expected-results-sha256") + 1] = hashlib.sha256(raw).hexdigest()
+    if failure == "unsafe":
+        argv[argv.index("--run-id") + 1] = "../escape"
+    if failure == "symlink":
+        (run / "report.md").symlink_to("/tmp/nonexistent-s10-report")
+    if failure == "write":
+
+        def bad_sync(fd):
+            raise OSError("Injected report flush failure")
+
+        monkeypatch.setattr(cli.os, "fsync", bad_sync)
+    before = {p.name: p.read_bytes() for p in run.glob("*.json")}
+    assert cli.main(argv) == 2
+    assert not (run / "report.md").exists()
+    assert before == {p.name: p.read_bytes() for p in run.glob("*.json")}
+
+
+@pytest.mark.parametrize(
+    "name,value,tolerance",
+    [
+        ("RMSE", "1", "0.005"),
+        ("MAE", "0.5", "0.005"),
+        ("R2", "0.75", "0.0005"),
+        ("MAPE", "20", "0.005"),
+        ("nRMSE", "50", "0.005"),
+    ],
+)
+def test_report_each_inclusive_tolerance_boundary(report_case, name, value, tolerance):
+    from reprolab.report import compare_run
+
+    m, r, context = report_case
+    for increment, expected in [("0", "WITHIN"), ("0.000000000001", "OUTSIDE")]:
+        data = json.loads(m.model_dump_json())
+        published = Decimal(value) + Decimal(tolerance) + Decimal(increment)
+        next(p for p in data["metrics"] if p["name"] == name)["published_claim"]["value"] = float(
+            published
+        )
+        changed = _report_rebind(m, r, data)
+        row = next(p for p in compare_run(changed, r, **context)["metrics"] if p["name"] == name)
+        assert row["display_check"] == expected
+
+
+def test_report_percentage_point_and_relative_differences_are_distinct(report_case):
+    from reprolab.report import compare_run
+
+    m, r, context = report_case
+    data = json.loads(m.model_dump_json())
+    for name, published in [("MAPE", 25.0), ("nRMSE", 80.0)]:
+        next(p for p in data["metrics"] if p["name"] == name)["published_claim"]["value"] = (
+            published
+        )
+    changed = _report_rebind(m, r, data)
+    rows = {p["name"]: p for p in compare_run(changed, r, **context)["metrics"]}
+    assert rows["MAPE"]["absolute_difference"] == Decimal("5")
+    assert rows["MAPE"]["relative_difference_percent"] == Decimal("20")
+    assert rows["nRMSE"]["absolute_difference"] == Decimal("30")
+    assert rows["nRMSE"]["relative_difference_percent"] == Decimal("37.5")
+    assert rows["nRMSE"]["agreement"] == "NOT_COMPARABLE"
+
+
+def test_report_rejects_zero_normalizer_masked_by_float_tolerance(report_case):
+    from reprolab.report import validate_results
+
+    m, r, context = report_case
+    r["metrics"]["R2"]["denominator"]["target_deviation_l2"] = 1e-300
+    r["metrics"]["nRMSE"]["denominator"]["test_std"] = 0.0
+    r["metrics"]["nRMSE"].update(value=None, status="NOT_COMPARABLE", reason="zero denominator")
+    with pytest.raises(ValueError, match="Zero/nonzero"):
+        validate_results(m, r, **context)
+
+
+def test_report_requires_independent_results_digest(report_cli_case):
+    _, argv = report_cli_case
+    idx = argv.index("--expected-results-sha256")
+    del argv[idx : idx + 2]
+    with pytest.raises(SystemExit) as exc:
+        cli.main(argv)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "path,value", [("dataset_sha256", "0" * 64), ("seed", 7), ("positive", True)]
+)
+def test_report_wrong_execution_metadata_rejected_even_for_exact_scores(report_case, path, value):
+    from reprolab.report import compare_run
+
+    m, r, context = report_case
+    data = json.loads(m.model_dump_json())
+    for metric in data["metrics"]:
+        metric["published_claim"]["value"] = r["metrics"][metric["name"]]["value"]
+    m = _report_rebind(m, r, data)
+    assert all(row["display_check"] == "WITHIN" for row in compare_run(m, r, **context)["metrics"])
+    if path == "dataset_sha256":
+        r[path] = value
+    if path == "seed":
+        r["split"][path] = value
+    if path == "positive":
+        r["model"]["parameters"][path] = value
+    with pytest.raises(ValueError):
+        compare_run(m, r, **context)
+
+
+def test_report_parent_deadline_cleans_partial_publication(monkeypatch, report_cli_case):
+    import time
+
+    run, argv = report_cli_case
+    before = {p.name: p.read_bytes() for p in run.glob("*.json")}
+    syncing = []
+
+    def delayed_sync(fd):
+        syncing.append(fd)
+        time.sleep(2)
+
+    monkeypatch.setattr(cli.os, "fsync", delayed_sync)
+    assert cli.main(argv + ["--max-seconds", "0.5"]) == 124
+    assert syncing
+    assert not (run / "report.md").exists()
+    assert before == {p.name: p.read_bytes() for p in run.glob("*.json")}
