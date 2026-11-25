@@ -19,6 +19,7 @@ This repository contains paper evidence, verified UCI dataset provenance, a pinn
 | S08 — Explicit locked manifest | Human-approved, 2026-11-23, based on successful verification | [Manifest schema and reviewed fixture](src/reprolab/manifest.py); S08 verification below |
 | S09 — Deterministic CLI execution | Human-approved, 2026-11-25, based on successful verification and repeatable results | [CLI](src/reprolab/cli.py); measured development runs and verification below |
 | S10 — Comparison and honest Markdown report | Human-approved, 2026-11-25, following manual verification of 162 passing tests and the INCONCLUSIVE report | [Report module](src/reprolab/report.py); S10 comparison and verification below |
+| S11 — Validator and report regression tests | Human-approved, 2026-11-25, based on successful verification | [Manifest/metric tests](tests/test_manifest.py); 11 new cases, 173 total passing |
 
 [Human-verified progress](docs/progress.md) is authoritative for approvals. Each step requires explicit review; committing and pushing require a separate instruction.
 
@@ -40,7 +41,7 @@ The candidate's conditional approval retains these uncertainties. A similar scor
 3. Read only the active step in [docs/roadmap.md](docs/roadmap.md).
 4. Review that step's files and observable checks before approving it.
 
-The implemented flow is an explicit reviewed manifest → data validation/preparation → bounded local model run → metrics → immutable JSON evidence → deterministic comparison report. Paper parsing and orchestration remain future work. Historical sections below retain each step's observed verification counts; the current full suite has 162 tests.
+The implemented flow is an explicit reviewed manifest → data validation/preparation → bounded local model run → metrics → immutable JSON evidence → deterministic comparison report. Paper parsing and orchestration remain future work. Historical sections below retain each step's observed verification counts; the current full suite has 173 tests.
 
 The ground-truth document is a human reference. Future extraction code and its model/tool access must not read `docs/` or receive these answer keys during evaluation.
 
@@ -525,7 +526,7 @@ Metrics store **definitions and published claims**, never computed results. nRMS
 
 `SourceObservations.model_json_schema()` is the current source-only protocol subset, with reusable `SourceFact`/`SourceEvidence` types for later extraction fields. It contains no P01 values, scientific defaults, claims, or human execution choices. It rejects human/runtime evidence kinds. A future extractor receives only the generic source schema and approved paper content; it must not receive the fixture, locked profile schema, `docs/`, or evaluation answers. A separate trusted review stage must resolve execution choices. Neither schema nor citations authenticate their own truth; artifact verification and human review remain necessary. S08 implements no extraction agent or automatic conversion/approval.
 
-One direct dependency is added: [Pydantic 2.14.4](https://pypi.org/project/pydantic/2.14.4/). Its four required transitives are locked; every previous package/version/artifact is retained. Lock resolution/installations run only inside Docker. Existing source mounts support the new module; no Compose/Dockerfile change is needed. Manifest verification stays in these S08 smoke assertions; the permanent manifest pytest module remains reserved for its own roadmap step.
+One direct dependency is added: [Pydantic 2.14.4](https://pypi.org/project/pydantic/2.14.4/). Its four required transitives are locked; every previous package/version/artifact is retained. Lock resolution/installations run only inside Docker. Existing source mounts support the new module; no Compose/Dockerfile change is needed. S08 used the smoke assertions below; S11 adds permanent missing-field regressions without duplicating the existing metric/CLI/report tests.
 
 Rebuild once for the new dependency lock, then run the existing suite and quality checks. The build timeout is configurable; the host Python only orchestrates Docker:
 
@@ -1024,7 +1025,44 @@ git diff --cached --name-only
 docker compose ps -a
 ```
 
-The reporter detects structural/configuration inconsistencies and pinned-file changes. It cannot independently authenticate a caller-provided checksum, reconstruct discarded predictions, or recover from arbitrary machine loss during a write; a caught write error removes only its newly created incomplete report. The scientific limitations remain visible. The user approved S10 following manual verification and separately authorized its five-file commit/push on 2026-11-25. S11 remains planning-only until explicitly approved. Review questions: why does nRMSE have an OUTSIDE arithmetic check but NOT_COMPARABLE eligible status? Why do three WITHIN values leave the scientific verdict inconclusive?
+The reporter detects structural/configuration inconsistencies and pinned-file changes. It cannot independently authenticate a caller-provided checksum, reconstruct discarded predictions, or recover from arbitrary machine loss during a write; a caught write error removes only its newly created incomplete report. The scientific limitations remain visible. The user approved S10 following manual verification and separately authorized its five-file commit/push on 2026-11-25; S11 implementation was subsequently authorized separately. Review questions: why does nRMSE have an OUTSIDE arithmetic check but NOT_COMPARABLE eligible status? Why do three WITHIN values leave the scientific verdict inconclusive?
+
+## S11 validator and metric consistency regressions
+
+[test_manifest.py](tests/test_manifest.py) adds **11 cases** to the existing 162, after checking their coverage. Eight cases delete exactly one required field from an otherwise valid in-memory development manifest: split seed; each of `fit_intercept`, `positive`, `copy_X`, and `n_jobs`; paper evidence; nRMSE `ddof`; or MAPE zero-target policy. Each expects Pydantic `ValidationError` with type `missing` at that exact field. Passing a negative test means the incomplete configuration was rejected, rather than completed with a default. The synthetic lock digest is a schema input, not a claim that a lockfile was verified by those unit tests.
+
+Three cases check perfect predictions, imperfect predictions, and negative R² using the same synthetic targets `(2, 4, 6)`. Their mean is 4, total squared target deviation is 8, and population variance is 8/3. Independently specified predictions produce squared-error sums of 0, 4, and 48:
+
+| Case | Predictions | Expected R² | Expected nRMSE (%) |
+|---|---|---:|---:|
+| Perfect | `(2, 4, 6)` | 1 | 0 |
+| Imperfect | `(2, 4, 8)` | 0.5 | `100 / sqrt(2)` |
+| Negative R² | `(6, 8, 10)` | −5 | `100 * sqrt(6)` |
+
+Each test first checks the independent expected values, units, counts, and population standard deviation, then asserts **`nRMSE / 100 ≈ sqrt(1 − R²)`**, using **rtol=atol=1e-12** (`pytest.approx(rel=..., abs=...)`). The identity requires the same aligned, unweighted evaluation population, at least two nonconstant targets, and nRMSE normalized by that population's standard deviation with **ddof=0**. It does not establish the paper's unresolved normalization convention and must not be applied to another denominator.
+
+The existing tests retain known-answer RMSE/MAE/R²/MAPE/nRMSE, MAPE zero handling, unsupported formulas, failed executions, incompatible protocols, and report classifications. S11 adds no duplicate report suite, production changes, dependencies, Compose changes, training runs, sweeps, or new artifacts. The full suite still includes its existing tiny synthetic model fits; the new S11 tests only validate in-memory manifests and evaluate fixed predictions.
+
+From the repository root, with Docker running and the existing approved input/run mounts available:
+
+```bash
+docker compose run --rm -T app uv run --offline pytest -q
+docker compose run --rm -T app uv run --offline pytest -v tests/test_manifest.py
+docker compose run --rm -T app uv run --offline ruff check --no-cache .
+docker compose run --rm -T app ruff format --check src tests
+docker compose run --rm -T app uv lock --check --offline
+docker compose run --rm -T app uv sync --locked --offline --no-cache --no-build
+docker compose run --rm -T app id
+git diff --check
+git diff --cached --name-only
+docker compose ps -a
+```
+
+Observed: **173 collected/passed, 0 failed/skipped** overall; **11 collected/passed, 0 failed/skipped** independently. Ruff lint/format (seven files), offline lock/frozen sync, and Git whitespace checks passed. Runtime UID/GID **10001**, read-only tests/source/data/lock, disabled pytest cache, absent bytecode/scratch, and container cleanup were verified. An initial format check requested two line-wrap changes in the new file; those were applied and the check passed. Original S09 JSON and the S10 report remain byte-identical and ignored. Published claims, source settings, manifests, and production code are unchanged; these unit tests cannot establish scientific reproduction. The user approved S11 based on successful verification on 2026-11-25 and separately authorized its three-file commit/push. S12 is planning-only until explicitly approved.
+
+Review questions: why divide nRMSE by 100? Why does a passing missing-field test indicate a rejection? Why does this identity leave the paper's normalization unresolved?
+
+Future controlled experiment sweeps are recorded as a [deferred roadmap proposal](docs/progress.md#future-roadmap-proposal--controlled-experiment-sweeps-deferred), not an S12 requirement: documented seed candidates including 42 and 123, scientifically justified model variants, independent manifests/results for every experiment, and consolidated reporting with separate numerical-agreement and protocol-verification statuses. All planned outcomes must be disclosed; exploratory matches must not be cherry-picked or relabelled as verified historical configurations. No sweep support or execution is implemented here.
 
 ## Repository contents
 
@@ -1048,6 +1086,7 @@ The reporter detects structural/configuration inconsistencies and pinned-file ch
 | `src/reprolab/cli.py` | Bounded offline argparse runner, strict validation, and guarded artifact publication |
 | `src/reprolab/report.py` | Strict result validation, compatibility gates, display-precision comparisons, and deterministic Markdown |
 | `tests/test_experiment.py` | Data/model/metric/CLI regressions and optional read-only XLS integration |
+| `tests/test_manifest.py` | Eight required-field regressions and three population-normalized nRMSE/R² consistency cases |
 | `runs/` (ignored, local only) | Canonical manifests, actual measured results, and generated reports; not included in Git or image |
 
 The Git remote is [kanchanpotdar/reprolabs](https://github.com/kanchanpotdar/reprolabs), configured locally as `origin`. Local preparation does not imply that these files have been published.
